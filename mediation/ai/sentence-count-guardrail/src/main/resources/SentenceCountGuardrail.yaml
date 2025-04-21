@@ -1,0 +1,44 @@
+type: operation_policy_specification
+version: v4.5.0
+data:
+  category: Mediation
+  name: SentenceCountGuardrail
+  version: v1
+  displayName: Sentence Count Guardrail
+  description: ""
+  applicableFlows:
+   - request
+   - response
+  supportedGateways:
+   - Synapse
+  supportedApiTypes:
+   - HTTP
+  policyAttributes:
+   -
+    name: min
+    displayName: Minimum Sentences
+    description: ""
+    type: Integer
+    allowedValues: []
+    required: true
+   -
+    name: max
+    displayName: Maximum Sentences
+    description: ""
+    type: Integer
+    allowedValues: []
+    required: true
+   -
+    name: jsonPath
+    displayName: JSON Path to Content
+    description: ""
+    type: String
+    allowedValues: []
+    required: false
+   -
+    name: doInvert
+    displayName: Invert
+    description: ""
+    type: Boolean
+    allowedValues: []
+    required: false
