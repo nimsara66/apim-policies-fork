@@ -15,16 +15,29 @@ import org.apache.synapse.MessageContext;
 import org.apache.synapse.commons.json.JsonUtil;
 import org.apache.synapse.core.axis2.Axis2MessageContext;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
+import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URL;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -138,7 +151,7 @@ public class AWSBedrockUtils {
     }
 
     public static Map<String, String> generateAWSSignature(
-            String host, String method, String uri, String queryString, String payload,
+            String host, String method, String service, String uri, String queryString, String payload,
             String accessKey, String secretKey, String region, String sessionToken) throws Exception {
 
         if (logger.isDebugEnabled()) {
@@ -158,12 +171,12 @@ public class AWSBedrockUtils {
             headers.put(AWSBedrockConstants.AMZ_SECURITY_TOKEN_HEADER, sessionToken);
         }
 
-        // Add content-type for POST request with JSON payload
-        headers.put(AWSBedrockConstants.CONTENT_TYPE_HEADER, "application/json");
-
-        // Calculate payload hash
-        String payloadHash = hash(payload);
-        headers.put(AWSBedrockConstants.AMZ_CONTENT_SHA_HEADER, payloadHash);
+        String payloadHash = payload != null? hash(payload): hash("");
+        if (payload != null && !payload.isEmpty()) {
+            // Add content-type and x-amz-content-sha25 for POST request with JSON payload
+            headers.put(AWSBedrockConstants.CONTENT_TYPE_HEADER, "application/json");
+            headers.put(AWSBedrockConstants.AMZ_CONTENT_SHA_HEADER, payloadHash);
+        }
 
         // Build canonical headers string and signed headers list
         StringBuilder canonicalHeaders = new StringBuilder();
@@ -178,9 +191,15 @@ public class AWSBedrockUtils {
         }
 
         // Step 3: Create canonical request
+        // For STS GET requests, we need to sort and encode query parameters
+        String canonicalQueryString = "";
+        if (queryString != null && !queryString.isEmpty()) {
+            canonicalQueryString = createCanonicalQueryString(queryString);
+        }
+
         String canonicalRequest = method + "\n" +
                 uri + "\n" +
-                queryString + "\n" +
+                canonicalQueryString + "\n" +
                 canonicalHeaders + "\n" +
                 signedHeaders + "\n" +
                 payloadHash;
@@ -188,12 +207,12 @@ public class AWSBedrockUtils {
         // Step 4: Create string to sign
         String algorithm = AWSBedrockConstants.AWS4_ALGORITHM;
         // String region = "ap-southeast-2";
-        String credentialScope = dateStamp + "/" + region + "/" + AWSBedrockConstants.BEDROCK_SERVICE + "/" +
+        String credentialScope = dateStamp + "/" + region + "/" + service + "/" +
                 AWSBedrockConstants.AWS4_REQUEST;
         String stringToSign = algorithm + "\n" + amzDate + "\n" + credentialScope + "\n" + hash(canonicalRequest);
 
         // Step 5: Calculate signature
-        byte[] signingKey = getSignatureKey(secretKey, dateStamp, region, AWSBedrockConstants.BEDROCK_SERVICE);
+        byte[] signingKey = getSignatureKey(secretKey, dateStamp, region, service);
         String signature = bytesToHex(hmacSHA256(stringToSign, signingKey));
 
         // Step 6: Create authorization header
@@ -211,6 +230,106 @@ public class AWSBedrockUtils {
         }
 
         return authHeaders;
+    }
+
+    private static String createCanonicalQueryString(String queryString) {
+        return Arrays.stream(queryString.split("&"))
+                .sorted(Comparator.comparing(param -> param.split("=", 2)[0]))
+                .collect(Collectors.joining("&"));
+    }
+
+    public static Map<String, String> generateAWSSignatureUsingAssumeRole(
+            String host, String method, String uri, String queryString, String payload,
+            String accessKey, String secretKey, String region, String sessionToken,
+            String roleArn, String roleRegion, String roleExternalId) throws Exception {
+
+        if (logger.isDebugEnabled()) {
+            logger.debug("Generating temporary credential using AssumeRole");
+        }
+
+        // Set up STS endpoint and parameters
+        String stsRegion = roleRegion != null && !roleRegion.isEmpty() ? roleRegion : "us-east-1";
+        String stsHost = "sts." + stsRegion + ".amazonaws.com";
+        String stsMethod = "GET";
+        String stsUri = "/";
+
+        // Create session name based on current date
+        LocalDate now = LocalDate.now();
+        String sessionName = String.format("%d%d%d", now.getYear(), now.getMonthValue(), now.getDayOfMonth());
+
+        // Build query string for AssumeRole
+        StringBuilder stsQueryBuilder = new StringBuilder();
+        stsQueryBuilder.append("Action=AssumeRole");
+        stsQueryBuilder.append("&Version=2011-06-15");
+        stsQueryBuilder.append("&RoleArn=").append(URLEncoder.encode(roleArn, StandardCharsets.UTF_8));
+        stsQueryBuilder.append("&RoleSessionName=").append(URLEncoder.encode(sessionName, StandardCharsets.UTF_8));
+        if (roleExternalId != null && !roleExternalId.isEmpty()) {
+            stsQueryBuilder.append("&ExternalId=").append(URLEncoder.encode(roleExternalId, StandardCharsets.UTF_8));
+        }
+        String stsQueryString = stsQueryBuilder.toString();
+
+        // Generate signature for STS call
+        Map<String, String> stsHeaders = generateAWSSignature(
+                stsHost, stsMethod, "sts", stsUri, stsQueryString, "",
+                accessKey, secretKey, stsRegion, sessionToken);
+
+        // Call STS API to assume role
+        URL url = new URL("https://" + stsHost + stsUri + "?" + stsQueryString);
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod(stsMethod);
+
+        // Add headers to the request
+        for (Map.Entry<String, String> header : stsHeaders.entrySet()) {
+            connection.setRequestProperty(header.getKey(), header.getValue());
+        }
+
+        // Get response
+        int responseCode = connection.getResponseCode();
+        if (responseCode != 200) {
+            BufferedReader errorReader = new BufferedReader(new InputStreamReader(connection.getErrorStream()));
+            String errorLine;
+            StringBuilder errorResponse = new StringBuilder();
+            while ((errorLine = errorReader.readLine()) != null) {
+                errorResponse.append(errorLine);
+            }
+            errorReader.close();
+
+            logger.error("Failed to assume role. Response code: " + responseCode + ", Error: "
+                    + errorResponse);
+            throw new Exception("Failed to assume role: " + responseCode);
+        }
+        BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+        String line;
+        StringBuilder response = new StringBuilder();
+        while ((line = reader.readLine()) != null) {
+            response.append(line);
+        }
+        reader.close();
+
+        // Parse XML response
+        String xmlResponse = response.toString();
+        String tempAccessKey = extractXmlValue(xmlResponse, "AccessKeyId");
+        String tempSecretKey = extractXmlValue(xmlResponse, "SecretAccessKey");
+        String tempSessionToken = extractXmlValue(xmlResponse, "SessionToken");
+
+        if (logger.isDebugEnabled()) {
+            logger.debug("Successfully generated temporary credentials");
+        }
+
+        // Use temporary credentials to generate the final signature
+        return generateAWSSignature(
+                host, method, AWSBedrockConstants.BEDROCK_SERVICE, uri, queryString, payload, tempAccessKey,
+                tempSecretKey, region, tempSessionToken);
+    }
+
+    // Helper method to extract values from XML
+    private static String extractXmlValue(String xml, String tagName) {
+        Pattern pattern = Pattern.compile("<" + tagName + ">(.*?)</" + tagName + ">");
+        Matcher matcher = pattern.matcher(xml);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return null;
     }
 
     // Helper method for SHA-256 hashing

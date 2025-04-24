@@ -13,6 +13,7 @@ import org.apache.synapse.mediators.AbstractMediator;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
 import javax.xml.stream.XMLStreamException;
 
@@ -48,6 +49,10 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
     private String secretKey;
     // Optional, can be null if not using temporary credentials
     private String sessionToken = null;
+    // Optional, only for temporary credentials using assumeRole
+    private String roleArn;
+    private String roleRegion;
+    private String roleExternalId;
 
     private String region;
     private String guardrailId;
@@ -101,11 +106,21 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
                 logger.debug("AWS Bedrock Guardrail URL: " + url);
             }
 
-            // Generate AWS authentication headers
-            Map<String, String> authHeaders = AWSBedrockUtils.generateAWSSignature(
-                    host, AWSBedrockConstants.AWS4_METHOD, uri, "", payload, this.accessKey,
-                    this.secretKey, this.region, this.sessionToken
-            );
+            Map<String, String> authHeaders;
+            if (roleArn != null && roleRegion != null) {
+                // Generate AWS authentication headers using AssumeRole
+                authHeaders = AWSBedrockUtils.generateAWSSignatureUsingAssumeRole(
+                        host, AWSBedrockConstants.AWS4_METHOD, uri, "", payload, this.accessKey,
+                        this.secretKey, this.region, this.sessionToken, this.roleArn, this.roleRegion,
+                        this.roleExternalId
+                );
+            } else {
+                // Generate AWS authentication headers
+                authHeaders = AWSBedrockUtils.generateAWSSignature(
+                        host, AWSBedrockConstants.AWS4_METHOD, AWSBedrockConstants.BEDROCK_SERVICE, uri, "", payload, this.accessKey,
+                        this.secretKey, this.region, this.sessionToken
+                );
+            }
 
             // Make the HTTP POST request to AWS Bedrock
             String response = AWSBedrockUtils.makeBedrockRequest(url, payload, authHeaders, this.timeout);
@@ -217,6 +232,36 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
     public void setSessionToken(String sessionToken) {
 
         this.sessionToken = sessionToken;
+    }
+
+    public String getRoleArn() {
+
+        return roleArn;
+    }
+
+    public void setRoleArn(String roleArn) {
+
+        this.roleArn = roleArn;
+    }
+
+    public String getRoleRegion() {
+
+        return roleRegion;
+    }
+
+    public void setRoleRegion(String roleRegion) {
+
+        this.roleRegion = roleRegion;
+    }
+
+    public String getRoleExternalId() {
+
+        return roleExternalId;
+    }
+
+    public void setRoleExternalId(String roleExternalId) {
+
+        this.roleExternalId = roleExternalId;
     }
 
     public String getRegion() {
