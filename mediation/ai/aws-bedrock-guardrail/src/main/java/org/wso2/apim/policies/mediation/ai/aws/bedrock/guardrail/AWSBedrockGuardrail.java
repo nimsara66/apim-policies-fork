@@ -1,3 +1,23 @@
+/*
+ *
+ * Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
 package org.wso2.apim.policies.mediation.ai.aws.bedrock.guardrail;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,32 +38,18 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.Map;
-import javax.xml.stream.XMLStreamException;
 
 /**
- * AWS Bedrock Guardrail mediator for API Gateway.
- *
- * This mediator integrates with AWS Bedrock Guardrails service to provide content safety,
- * moderation, and compliance capabilities for API payloads. It intercepts API requests or
- * responses, sends the content to AWS Bedrock Guardrails for evaluation, and can block
- * or modify content based on the guardrail results.
- *
- * Key features:
- * - Content moderation - Detect and filter harmful, offensive, or inappropriate content
- * - PII detection and redaction - Optionally identify and redact personally identifiable information
- * - AI-powered content safety - Leverage AWS Bedrock's advanced AI models for content analysis
- * - Custom guardrails - Use configured AWS Bedrock guardrail id and version
- *
- * This mediator requires AWS credentials and guardrail configuration to be provided through
- * the bedrockConfig property. It communicates with AWS Bedrock using AWS Signature V4
- * authentication and provides the evaluation results back to the API Gateway mediation flow.
- *
- * Usage in mediation sequence example:
- *
- * &lt;amazongpt:bedrockguardrail&gt;
- *     &lt;bedrockConfig&gt;{JSON configuration}&lt;/bedrockConfig&gt;
- *     &lt;redactPII&gt;true&lt;/redactPII&gt;
- * &lt;/amazongpt:bedrockguardrail&gt;
+ * AWS Bedrock Guardrail mediator.
+ * <p>
+ * A mediator that integrates with AWS Bedrock Guardrails to provide request/ response content moderation
+ * and PII detection/redaction capabilities for API payloads. This mediator can operate
+ * in both blocking mode (where violating content stops processing) and redaction mode
+ * (where PII is automatically masked).
+ * <p>
+ * The mediator supports various authentication methods including direct API keys and
+ * role assumption for cross-account access. It can process both request and response payloads,
+ * and can be configured to target specific portions of JSON payloads using JsonPath expressions.
  */
 public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(AWSBedrockGuardrail.class);
@@ -87,7 +93,7 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Executing AWS Bedrock Guardrail mediation");
+            logger.debug("AWSBedrockGuardrail: Beginning guardrail evaluation");
         }
 
         try {
@@ -111,11 +117,15 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
             String url = AWSBedrockConstants.GUARDRAIL_PROTOCOL + "://" + host + uri;
 
             if (logger.isDebugEnabled()) {
-                logger.debug("AWS Bedrock Guardrail URL: " + url);
+                logger.debug("AWSBedrockGuardrail: Sending request to endpoint: " + url);
             }
 
             Map<String, String> authHeaders;
             if (roleArn != null && roleRegion != null) {
+
+                if (logger.isDebugEnabled()) {
+                    logger.debug("AWSBedrockGuardrail: Using role-based authentication with ARN: " + roleArn);
+                }
                 // Generate AWS authentication headers using AssumeRole
                 authHeaders = AWSBedrockUtils.generateAWSSignatureUsingAssumeRole(
                         host, AWSBedrockConstants.AWS4_METHOD, uri, "", payload, this.accessKey,
@@ -123,9 +133,14 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
                         this.roleExternalId
                 );
             } else {
+
+                if (logger.isDebugEnabled()) {
+                    logger.debug("AWSBedrockGuardrail: Using direct AWS credentials for authentication");
+                }
                 // Generate AWS authentication headers
                 authHeaders = AWSBedrockUtils.generateAWSSignature(
-                        host, AWSBedrockConstants.AWS4_METHOD, AWSBedrockConstants.BEDROCK_SERVICE, uri, "", payload, this.accessKey,
+                        host, AWSBedrockConstants.AWS4_METHOD, AWSBedrockConstants.BEDROCK_SERVICE, uri, "",
+                        payload, this.accessKey,
                         this.secretKey, this.region, this.sessionToken
                 );
             }
@@ -135,46 +150,54 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
 
             return evaluateGuardrailResponse(response, messageContext);
         } catch (Exception e) {
-            logger.error("Error during AWS Bedrock Guardrail mediation", e);
+            logger.error("AWSBedrockGuardrail: Error during guardrail evaluation", e);
         }
 
         return true;
     }
 
     /**
-     * Evaluates the guardrail response and updates the message context accordingly.
+     * Evaluates the guardrail response from AWS Bedrock and takes appropriate action.
+     * This method processes three main scenarios:
+     * 1. Guardrail intervention that blocks the request
+     * 2. Guardrail intervention that masks PII in the output
+     * 3. PII detection with optional redaction (when redactPII is enabled)
      *
-     * @param response The response from AWS Bedrock
-     * @param messageContext The current message context
-     * @return true if processing should continue, false if guardrail blocked the request
+     * @param response The JSON response string from AWS Bedrock
+     * @param messageContext The current message context being processed
+     * @return {@code true} if processing should continue, {@code false} if guardrail blocked the request
      * @throws IOException If JSON parsing fails
      */
-    private boolean evaluateGuardrailResponse(String response, MessageContext messageContext) throws IOException, XMLStreamException {
+    private boolean evaluateGuardrailResponse(String response, MessageContext messageContext) throws IOException {
         ObjectMapper mapper = new ObjectMapper();
         JsonNode responseBody = mapper.readTree(response);
 
         // Check if guardrail intervened
-        if (responseBody.has("action") &&
-                "GUARDRAIL_INTERVENED".equals(responseBody.get("action").asText())) {
+        if (responseBody.has(AWSBedrockConstants.ASSESSMENT_ACTION) &&
+                "GUARDRAIL_INTERVENED".equals(responseBody.get(AWSBedrockConstants.ASSESSMENT_ACTION).asText())) {
 
             if (logger.isDebugEnabled()) {
-                logger.debug("AWS Bedrock Guardrail intervention detected in response");
+                logger.debug("AWSBedrockGuardrail: Request blocked by guardrail policy");
             }
 
             // Check if guardrail blocked the request
-            if (responseBody.has("actionReason") &&
-                    "Guardrail blocked.".equals(responseBody.get("actionReason").asText())) {
+            if (responseBody.has(AWSBedrockConstants.ASSESSMENT_REASON) &&
+                    "Guardrail blocked.".equals(responseBody.get(AWSBedrockConstants.ASSESSMENT_REASON).asText())) {
 
                 // Set error properties in message context
                 messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        AWSBedrockConstants.BEDROCK_GUARDRAIL_ERROR_CODE);
+                        AWSBedrockConstants.ERROR_CODE);
                 messageContext.setProperty(AWSBedrockConstants.ERROR_TYPE, "Guardrail Blocked");
                 messageContext.setProperty(AWSBedrockConstants.CUSTOM_HTTP_SC,
-                        AWSBedrockConstants.BEDROCK_GUARDRAIL_ERROR_CODE);
+                        AWSBedrockConstants.ERROR_CODE);
 
                 // Build assessment details
                 String assessmentObject = buildAssessmentObject(responseBody);
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
+
+                if (logger.isDebugEnabled()) {
+                    logger.debug("AWSBedrockGuardrail: Triggering fault sequence");
+                }
 
                 Mediator faultMediator = messageContext.getSequence(AWSBedrockConstants.FAULT_SEQUENCE_KEY);
                 faultMediator.mediate(messageContext);
@@ -182,18 +205,18 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
             }
 
             // Check if guardrail masked any PII
-            if (responseBody.has("action") &&
-                    "Guardrail masked.".equals(responseBody.get("actionReason").asText())) {
+            if (responseBody.has(AWSBedrockConstants.ASSESSMENT_ACTION) &&
+                    "Guardrail masked.".equals(responseBody.get(AWSBedrockConstants.ASSESSMENT_REASON).asText())) {
 
                 if (logger.isDebugEnabled()) {
-                    logger.debug("AWS Bedrock Guardrail intervention detected in response: PII");
+                    logger.debug("AWSBedrockGuardrail: PII masking applied by Bedrock service");
                 }
 
-                JsonNode output = responseBody.get("output");
+                JsonNode output = responseBody.get(AWSBedrockConstants.BEDROCK_GUARDRAIL_OUTPUT);
                 if (output != null && output.isArray() && !output.isEmpty()) {
                     JsonNode firstOutput = output.get(0);
-                    if (firstOutput.has("text")) {
-                        String text = firstOutput.get("text").asText();
+                    if (firstOutput.has(AWSBedrockConstants.BEDROCK_GUARDRAIL_TEXT)) {
+                        String text = firstOutput.get(AWSBedrockConstants.BEDROCK_GUARDRAIL_TEXT).asText();
 
                         if (this.jsonPath != null && !this.jsonPath.trim().isEmpty()) {
                             String jsonContent = AWSBedrockUtils.extractJsonContent(messageContext);
@@ -208,19 +231,15 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
                                 true, true);
                     }
                 }
-
-                if (logger.isDebugEnabled()) {
-                    logger.debug("Successfully masked the payload");
-                }
             }
         } else if (redactPII) {
 
             if (logger.isDebugEnabled()) {
-                logger.debug("AWS Bedrock Guardrail Redacting PII if detected");
+                logger.debug("AWSBedrockGuardrail: Processing PII redaction based on detection results");
             }
 
-            JsonNode sensitiveInformationPolicy = responseBody.path("assessments").path(0)
-                    .get("sensitiveInformationPolicy");
+            JsonNode sensitiveInformationPolicy = responseBody.path(AWSBedrockConstants.ASSESSMENTS).path(0)
+                    .get(AWSBedrockConstants.BEDROCK_GUARDRAIL_SIP);
             if (sensitiveInformationPolicy == null) return true;
 
             String jsonContent = AWSBedrockUtils.extractJsonContent(messageContext);
@@ -232,12 +251,12 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
             }
 
             // Process piiEntities
-            JsonNode piiEntities = sensitiveInformationPolicy.get("piiEntities");
+            JsonNode piiEntities = sensitiveInformationPolicy.get(AWSBedrockConstants.BEDROCK_GUARDRAIL_PII_ENTITIES);
             if (piiEntities != null && piiEntities.isArray()) {
                 for (JsonNode entity : piiEntities) {
-                    if (entity.path("detected").asBoolean()) {
-                        String match = entity.path("match").asText();
-                        String type = entity.path("type").asText();
+                    if (entity.path(AWSBedrockConstants.BEDROCK_GUARDRAIL_PII_DETECTED).asBoolean()) {
+                        String match = entity.path(AWSBedrockConstants.BEDROCK_GUARDRAIL_PII_MATCH).asText();
+                        String type = entity.path(AWSBedrockConstants.BEDROCK_GUARDRAIL_PII_TYPE).asText();
                         jsonContent = AWSBedrockUtils
                                 .replaceExactMatch(jsonContent, match, "[" + type + "]");
                     }
@@ -245,12 +264,12 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
             }
 
             // Process regexes
-            JsonNode regexes = sensitiveInformationPolicy.get("regexes");
+            JsonNode regexes = sensitiveInformationPolicy.get(AWSBedrockConstants.BEDROCK_GUARDRAIL_PII_REGEXES);
             if (regexes != null && regexes.isArray()) {
                 for (JsonNode regexNode : regexes) {
-                    if (regexNode.path("detected").asBoolean()) {
-                        String match = regexNode.path("match").asText();
-                        String name = regexNode.path("name").asText();
+                    if (regexNode.path(AWSBedrockConstants.BEDROCK_GUARDRAIL_PII_DETECTED).asBoolean()) {
+                        String match = regexNode.path(AWSBedrockConstants.BEDROCK_GUARDRAIL_PII_MATCH).asText();
+                        String name = regexNode.path(AWSBedrockConstants.BEDROCK_GUARDRAIL_PII_NAME).asText();
                         jsonContent = AWSBedrockUtils
                                 .replaceExactMatch(jsonContent, match, "[" + name.toUpperCase() + "]");
                     }
@@ -274,23 +293,28 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
 
     /**
      * Builds a JSON object containing assessment details from the guardrail response.
+     * This creates a structured representation of the guardrail findings to be included
+     * in error messages or for logging purposes.
      *
-     * @param responseBody The parsed response body
-     * @return A JSON object with assessment details
+     * @param responseBody The parsed JSON response from AWS Bedrock
+     * @return A JSON string containing assessment details and guardrail action information
      */
     private String buildAssessmentObject(JsonNode responseBody) {
         JSONObject assessmentObject = new JSONObject();
 
-        if (responseBody.has("assessments")) {
-            assessmentObject.put("assessment", new JSONObject(responseBody.get("assessments").get(0).toString()));
+        if (responseBody.has(AWSBedrockConstants.ASSESSMENTS)) {
+            assessmentObject.put(AWSBedrockConstants.ASSESSMENTS, new JSONObject(responseBody
+                    .get(AWSBedrockConstants.ASSESSMENTS).get(0).toString()));
         }
 
-        if (responseBody.has("action")) {
-            assessmentObject.put("action", responseBody.get("action").asText());
+        if (responseBody.has(AWSBedrockConstants.ASSESSMENT_ACTION)) {
+            assessmentObject.put(AWSBedrockConstants.ASSESSMENT_ACTION,
+                    responseBody.get(AWSBedrockConstants.ASSESSMENT_ACTION).asText());
         }
 
-        if (responseBody.has("actionReason")) {
-            assessmentObject.put("actionReason", responseBody.get("actionReason").asText());
+        if (responseBody.has(AWSBedrockConstants.ASSESSMENT_REASON)) {
+            assessmentObject.put(AWSBedrockConstants.ASSESSMENT_REASON,
+                    responseBody.get(AWSBedrockConstants.ASSESSMENT_REASON).asText());
         }
 
         return assessmentObject.toString();

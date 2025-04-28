@@ -1,3 +1,23 @@
+/*
+ *
+ * Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
 package org.wso2.apim.policies.mediation.ai.aws.bedrock.guardrail;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,11 +61,25 @@ import java.util.stream.Collectors;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
+/**
+ * Utility class providing functionalities to interact with the AWS Bedrock Guardrail API.
+ * This class offers methods for extracting JSON content from Axis2 message contexts,
+ * performing exact string replacements, making HTTP POST requests to the Bedrock API,
+ * creating request payloads, and generating AWS Signature Version 4 for authentication.
+ * It also includes functionality to generate temporary AWS credentials using AssumeRole
+ * for secure interaction with the Bedrock service.
+ */
+
 public class AWSBedrockUtils {
     private static final Log logger = LogFactory.getLog(AWSBedrockUtils.class);
 
     /**
-     * Extracts JSON content from the message context.
+     * Extracts the JSON payload as a String from the Axis2 {@link MessageContext}.
+     * This method is specifically designed to retrieve the JSON content of the message
+     * body when working within an Axis2 environment.
+     *
+     * @param messageContext The Axis2 {@link MessageContext} containing the request or response.
+     * @return The JSON payload as a String, or null if an error occurs during extraction.
      */
     public static String extractJsonContent(MessageContext messageContext) {
         org.apache.axis2.context.MessageContext axis2MC =
@@ -53,6 +87,18 @@ public class AWSBedrockUtils {
         return JsonUtil.jsonPayloadToString(axis2MC);
     }
 
+    /**
+     * Replaces all exact occurrences of a target string within a given content string
+     * with a specified replacement string. This method ensures that only whole,
+     * non-overlapping matches of the target are replaced, treating it as a literal string.
+     * Regular expression special characters within the target string are automatically escaped.
+     *
+     * @param content     The original string in which replacements will be made.
+     * @param target      The exact string to be replaced. Regular expression metacharacters
+     * in this string are treated literally.
+     * @param replacement The string to replace all occurrences of the target.
+     * @return A new string with all exact matches of the target replaced by the replacement.
+     */
     public static String replaceExactMatch(String content, String target, String replacement) {
         // Escape regex special characters in the match string
         String escapedTarget = Pattern.quote(target);
@@ -61,13 +107,22 @@ public class AWSBedrockUtils {
     }
 
     /**
-     * Makes an HTTP POST request to AWS Bedrock Guardrail API.
+     * Makes an HTTP POST request to the specified AWS Bedrock Guardrail API endpoint.
+     * This method handles setting the necessary headers, request body, and processing
+     * the response. It also includes a configurable timeout for the connection, socket,
+     * and connection request.
      *
-     * @param url The Bedrock API endpoint URL
-     * @param payload The JSON payload
-     * @param headers The authentication headers
-     * @return The response as a JsonNode
-     * @throws Exception If the request fails
+     * @param url     The complete URL of the AWS Bedrock Guardrail API endpoint.
+     * @param payload The JSON payload to be sent in the request body.
+     * @param headers A {@code Map} of HTTP headers to be included in the request,
+     * typically containing authentication information.
+     * @param timeout The timeout value in milliseconds for establishing a connection,
+     * waiting for data (socket timeout), and acquiring a connection
+     * from the connection manager.
+     * @return The response body as a String if the request is successful (HTTP status
+     * code 2xx), otherwise null.
+     * @throws Exception If an error occurs during the HTTP request execution, such as
+     * network issues or invalid parameters.
      */
     public static String makeBedrockRequest(
             String url, String payload, Map<String, String> headers, Integer timeout) throws Exception {
@@ -120,11 +175,16 @@ public class AWSBedrockUtils {
     }
 
     /**
-     * Creates the request payload for AWS Bedrock Guardrail API.
+     * Creates the JSON request payload for the AWS Bedrock Guardrail API. The payload
+     * structure includes the content to be processed and a source indicator to distinguish
+     * between requests and responses being sent to the Guardrail API.
      *
-     * @param content The content to be guarded by Bedrock
-     * @return JSON payload for Bedrock API
-     * @throws Exception If payload creation fails
+     * @param content    The text content that needs to be evaluated by the Bedrock Guardrail.
+     * @param isResponse A boolean flag indicating whether the content originates from an
+     * application response (true) or a user request (false). This helps
+     * the Guardrail service apply appropriate rules.
+     * @return A JSON string representing the request payload for the Bedrock API.
+     * @throws Exception If an error occurs during the creation or serialization of the JSON payload.
      */
     public static String createBedrockRequestPayload(String content, boolean isResponse) throws Exception {
 
@@ -157,12 +217,32 @@ public class AWSBedrockUtils {
         return mapper.writeValueAsString(requestMap);
     }
 
+    /**
+     * Generates the necessary AWS Signature Version 4 headers for authenticating requests
+     * to the AWS Bedrock Guardrail API. This method constructs the signature based on
+     * the provided request parameters and AWS credentials.
+     *
+     * @param host         The hostname of the AWS Bedrock Guardrail API endpoint.
+     * @param method       The HTTP method of the request (e.g., "POST").
+     * @param service      The AWS service identifier (e.g., "bedrock").
+     * @param uri          The URI path of the API endpoint.
+     * @param queryString  The query string parameters of the request (can be null or empty).
+     * @param payload      The request payload as a String (can be null or empty for GET requests).
+     * @param accessKey    The AWS access key ID.
+     * @param secretKey    The AWS secret access key.
+     * @param region       The AWS region for the Bedrock service.
+     * @param sessionToken The AWS session token, if using temporary credentials (can be null or empty).
+     * @return A {@code Map} containing the HTTP headers required for AWS Signature V4 authentication,
+     * including the "Authorization" header.
+     * @throws Exception If an error occurs during the signature generation process, such as
+     * problems with hashing or HMAC calculation.
+     */
     public static Map<String, String> generateAWSSignature(
             String host, String method, String service, String uri, String queryString, String payload,
             String accessKey, String secretKey, String region, String sessionToken) throws Exception {
 
         if (logger.isDebugEnabled()) {
-            logger.debug("Generating AWS Signature V4 for Bedrock Guardrail request");
+            logger.debug("AWSBedrockGuardrail: Generating AWS Signature V4 for Bedrock Guardrail request");
         }
 
         // Step 1: Create date stamps
@@ -251,7 +331,7 @@ public class AWSBedrockUtils {
             String roleArn, String roleRegion, String roleExternalId) throws Exception {
 
         if (logger.isDebugEnabled()) {
-            logger.debug("Generating temporary credential using AssumeRole");
+            logger.debug("AWSBedrockGuardrail: Generating temporary credential using AssumeRole");
         }
 
         // Set up STS endpoint and parameters
@@ -348,11 +428,11 @@ public class AWSBedrockUtils {
 
     // Helper method to get signature key
     public static byte[] getSignatureKey(String key, String dateStamp, String regionName, String serviceName) throws Exception {
-        byte[] kSecret = ("AWS4" + key).getBytes(StandardCharsets.UTF_8);
+        byte[] kSecret = (AWSBedrockConstants.AWS4 + key).getBytes(StandardCharsets.UTF_8);
         byte[] kDate = hmacSHA256(dateStamp, kSecret);
         byte[] kRegion = hmacSHA256(regionName, kDate);
         byte[] kService = hmacSHA256(serviceName, kRegion);
-        return hmacSHA256("aws4_request", kService);
+        return hmacSHA256(AWSBedrockConstants.AWS4_REQUEST, kService);
     }
 
     // Helper method for HMAC-SHA256

@@ -1,9 +1,27 @@
+/*
+ *
+ * Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
 package org.wso2.apim.policies.mediation.ai.prompt.decorator;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.google.gson.reflect.TypeToken;
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.TypeRef;
@@ -17,32 +35,17 @@ import org.apache.synapse.core.SynapseEnvironment;
 import org.apache.synapse.core.axis2.Axis2MessageContext;
 import org.apache.synapse.mediators.AbstractMediator;
 
-import java.lang.reflect.Type;
-import java.net.URI;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * Regex Guardrail mediator for WSO2 API Gateway.
- *
- * This mediator provides content filtering capabilities for API payloads using regular expression patterns.
- * It intercepts API requests or responses, validates the JSON content against configured regex patterns,
- * and can block requests that match (or optionally don't match) the specified patterns.
- *
- * Key features:
- * - Flexible pattern matching - Apply regex patterns to entire JSON payloads or specific fields
- * - JsonPath support - Target validation to specific parts of JSON payloads using JsonPath expressions
- * - Invertible logic - Block content that matches OR doesn't match patterns
- * - Custom error responses - Return detailed assessment information when content is blocked
- *
- * When content violates the guardrail settings, the mediator triggers a fault sequence with
- * appropriate error details and blocks further processing of the request/ response.
+ * PromptDecorator mediator.
+ * <p>
+ * A mediator that decorates specific parts of a JSON payload by either prepending or appending
+ * content at a specified JSONPath location.
+ * <p>
+ * Supports modifying string fields or array fields based on the provided configuration.
+ * Designed for use cases such as enhancing AI prompts or modifying request/response payloads dynamically.
  */
 public class PromptDecorator extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(PromptDecorator.class);
@@ -54,7 +57,7 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
     private String decoration;
 
     /**
-     * Initializes the RegexGuardrail mediator.
+     * Initializes the PromptDecorator mediator.
      *
      * @param synapseEnvironment The Synapse environment instance.
      */
@@ -73,24 +76,40 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
         // No specific resources to release
     }
 
+    /**
+     * Executes the PromptDecorator mediation logic.
+     * <p>
+     * Locates the target JSON field using JSONPath and applies the configured decoration.
+     *
+     * @param messageContext The message context containing the JSON payload.
+     * @return {@code true} to continue mediation flow.
+     */
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Executing PromptDecorator mediation");
+            logger.debug("PromptDecorator: Mediating message context with prompt decorator.");
         }
 
         try {
             findAndTransformPayload(messageContext);
         } catch (Exception e) {
-            logger.error("Error during PromptDecorator mediation", e);
+            logger.error("PromptDecorator: Error during mediation of message context", e);
         }
 
         return true;
     }
 
+    /**
+     * Locates the payload field using JSONPath and decorates it based on the configured settings.
+     * <p>
+     * Supports both string and array decorations. Updates the payload within the message context.
+     *
+     * @param messageContext The message context containing the JSON payload.
+     * @throws AxisFault If an error occurs while modifying the payload.
+     */
     private void findAndTransformPayload(MessageContext messageContext) throws AxisFault {
         if (logger.isDebugEnabled()) {
-            logger.debug("PromptTemplate transforming payload");
+            logger.debug("PromptDecorator: Transforming JSON payload using JSONPath: " + jsonPath);
         }
 
         String jsonContent = extractJsonContent(messageContext);
@@ -134,7 +153,7 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
             // Set the updated array back
             documentContext.set(this.jsonPath, updatedArray);
         } else {
-            logger.warn("Unknown type for decoration: " + this.type);
+            logger.warn("PromptDecorator: Unknown decoration type: " + this.type);
         }
 
         // Update the modified JSON
@@ -150,6 +169,10 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
 
     /**
      * Extracts JSON content from the message context.
+     * This utility method converts the Axis2 message payload to a JSON string.
+     *
+     * @param messageContext The message context containing the JSON payload
+     * @return The JSON payload as a string, or null if extraction fails
      */
     public static String extractJsonContent(MessageContext messageContext) {
         org.apache.axis2.context.MessageContext axis2MC =
@@ -170,11 +193,13 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
             Gson gson = new Gson();
             JsonObject root = gson.fromJson(promptDecoratorConfig, JsonObject.class);
 
-            if (root.has("decoration") && root.get("decoration").isJsonArray()) {
+            if (root.has(PromptDecoratorConstants.DECORATION)
+                    && root.get(PromptDecoratorConstants.DECORATION).isJsonArray()) {
                 this.type = PromptDecoratorConstants.DecorationType.ARRAY;
-                this.decoration = root.getAsJsonArray("decoration").toString();
-            } else if (root.has("decoration") && root.get("decoration").isJsonPrimitive()
-                    && root.get("decoration").getAsJsonPrimitive().isString()) {
+                this.decoration = root.getAsJsonArray(PromptDecoratorConstants.DECORATION).toString();
+            } else if (root.has(PromptDecoratorConstants.DECORATION)
+                    && root.get(PromptDecoratorConstants.DECORATION).isJsonPrimitive()
+                    && root.get(PromptDecoratorConstants.DECORATION).getAsJsonPrimitive().isString()) {
                 this.type = PromptDecoratorConstants.DecorationType.STRING;
                 this.decoration = root.getAsString();
             } else {

@@ -1,3 +1,23 @@
+/*
+ *
+ * Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
 package org.wso2.apim.policies.mediation.ai.json.schema.guardrail;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -22,20 +42,14 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 /**
- * Regex Guardrail mediator for WSO2 API Gateway.
- *
- * This mediator provides content filtering capabilities for API payloads using regular expression patterns.
- * It intercepts API requests or responses, validates the JSON content against configured regex patterns,
- * and can block requests that match (or optionally don't match) the specified patterns.
- *
- * Key features:
- * - Flexible pattern matching - Apply regex patterns to entire JSON payloads or specific fields
- * - JsonPath support - Target validation to specific parts of JSON payloads using JsonPath expressions
- * - Invertible logic - Block content that matches OR doesn't match patterns
- * - Custom error responses - Return detailed assessment information when content is blocked
- *
- * When content violates the guardrail settings, the mediator triggers a fault sequence with
- * appropriate error details and blocks further processing of the request/ response.
+ * JSON Schema Guardrail mediator.
+ * <p>
+ * A Synapse mediator that validates incoming JSON payloads against a specified JSON Schema.
+ * Supports selective validation using JsonPath expressions and inversion logic to determine
+ * blocking conditions. Designed to enforce data quality and compliance checks at API gateway level.
+ * <p>
+ * If the payload fails validation (or passes when inversion is enabled), the mediator
+ * triggers a configured fault sequence to handle the violation.
  */
 public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(JSONSchemaGuardrail.class);
@@ -58,17 +72,26 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
     }
 
     /**
-     * Destroys the RegexGuardrail mediator instance and releases any allocated resources.
+     * Destroys the JSONSchemaGuardrail mediator instance and releases any allocated resources.
      */
     @Override
     public void destroy() {
         // No specific resources to release
     }
 
+    /**
+     * Executes the JSON schema validation logic against the incoming message payload.
+     * <p>
+     * If the payload fails validation (or passes, when inverted), a fault sequence is triggered,
+     * and the mediation flow is interrupted.
+     *
+     * @param messageContext The Synapse message context containing the payload.
+     * @return {@code true} to continue mediation flow, {@code false} to invoke a fault sequence.
+     */
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Executing JSONSchemaGuardrail mediation");
+            logger.debug("JSONSchemaGuardrail: Beginning guardrail evaluation.");
         }
 
         try {
@@ -78,17 +101,17 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
             if (!finalResult) {
                 // Set error properties in message context
                 messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        JSONSchemaGuardrailConstants.JSON_SCHEMA_GUARDRAIL_ERROR_CODE);
+                        JSONSchemaGuardrailConstants.ERROR_CODE);
                 messageContext.setProperty(JSONSchemaGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
                 messageContext.setProperty(JSONSchemaGuardrailConstants.CUSTOM_HTTP_SC,
-                        JSONSchemaGuardrailConstants.JSON_SCHEMA_GUARDRAIL_ERROR_CODE);
+                        JSONSchemaGuardrailConstants.ERROR_CODE);
 
                 // Build assessment details
                 String assessmentObject = buildAssessmentObject();
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
 
                 if (logger.isDebugEnabled()) {
-                    logger.debug("Initiating JSONSchemaGuardrail fault sequence");
+                    logger.debug("JSONSchemaGuardrail: Triggering configured fault sequence.");
                 }
 
                 Mediator faultMediator = messageContext.getSequence(JSONSchemaGuardrailConstants.FAULT_SEQUENCE_KEY);
@@ -96,15 +119,21 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
                 return false; // Stop further processing
             }
         } catch (Exception e) {
-            logger.error("Error during JSONSchemaGuardrail mediation", e);
+            logger.error("JSONSchemaGuardrail: Error during guardrail mediation.", e);
         }
 
         return true;
     }
 
+    /**
+     * Validates the extracted JSON content against the configured schema.
+     *
+     * @param messageContext The Synapse message context.
+     * @return {@code true} if the payload matches the schema; otherwise, {@code false}.
+     */
     private boolean validatePayload(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Validating JSONSchemaGuardrail payload");
+            logger.debug("JSONSchemaGuardrail: Validating extracted JSON payload.");
         }
 
         String jsonContent = extractJsonContent(messageContext);
@@ -122,12 +151,15 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
     }
 
     /**
-     * Validates a JSON string against the configured schema.
+     * Performs JSON Schema validation on the provided input string.
+     *
+     * @param input The JSON string to validate.
+     * @return {@code true} if a valid match is found; otherwise, {@code false}.
      */
     private boolean validateJsonAgainstSchema(String input) {
 
         if (logger.isDebugEnabled()) {
-            logger.debug("JSON Schema Guardrail validating against schema");
+            logger.debug("JSONSchemaGuardrail: Executing schema validation on input.");
         }
 
         ObjectMapper objectMapper = new ObjectMapper();
@@ -148,7 +180,10 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
     }
 
     /**
-     * Extracts JSON content from the message context.
+     * Extracts the full JSON payload from the message context.
+     *
+     * @param messageContext The Synapse message context.
+     * @return The JSON content as a string, or {@code null} if unavailable.
      */
     public static String extractJsonContent(MessageContext messageContext) {
         org.apache.axis2.context.MessageContext axis2MC =
@@ -158,8 +193,10 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
 
     /**
      * Builds a JSON object containing assessment details from the guardrail response.
+     * This creates a structured representation of the guardrail findings to be included
+     * in error messages or for logging purposes.
      *
-     * @return A JSON object with assessment details
+     * @return A JSON string containing assessment details and guardrail action information
      */
     private String buildAssessmentObject() {
         if (logger.isDebugEnabled()) {
@@ -168,9 +205,10 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
 
         JSONObject assessmentObject = new JSONObject();
 
-        assessmentObject.put("action", "GUARDRAIL_INTERVENED");
-        assessmentObject.put("actionReason", "Guardrail blocked.");
-        assessmentObject.put("assessments", "Violation of regular expression: " + schema + " detected.");
+        assessmentObject.put(JSONSchemaGuardrailConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
+        assessmentObject.put(JSONSchemaGuardrailConstants.ASSESSMENT_REASON, "Guardrail blocked.");
+        assessmentObject.put(JSONSchemaGuardrailConstants.ASSESSMENTS,
+                "Violation of regular expression: " + schema + " detected.");
         return assessmentObject.toString();
     }
 

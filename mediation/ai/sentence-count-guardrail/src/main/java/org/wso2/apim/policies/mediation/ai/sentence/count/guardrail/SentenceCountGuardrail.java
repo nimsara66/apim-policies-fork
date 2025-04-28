@@ -1,3 +1,23 @@
+/*
+ *
+ * Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
 package org.wso2.apim.policies.mediation.ai.sentence.count.guardrail;
 
 import com.jayway.jsonpath.JsonPath;
@@ -14,20 +34,14 @@ import org.apache.synapse.mediators.AbstractMediator;
 import org.json.JSONObject;
 
 /**
- * Regex Guardrail mediator for WSO2 API Gateway.
- *
- * This mediator provides content filtering capabilities for API payloads using regular expression patterns.
- * It intercepts API requests or responses, validates the JSON content against configured regex patterns,
- * and can block requests that match (or optionally don't match) the specified patterns.
- *
- * Key features:
- * - Flexible pattern matching - Apply regex patterns to entire JSON payloads or specific fields
- * - JsonPath support - Target validation to specific parts of JSON payloads using JsonPath expressions
- * - Invertible logic - Block content that matches OR doesn't match patterns
- * - Custom error responses - Return detailed assessment information when content is blocked
- *
- * When content violates the guardrail settings, the mediator triggers a fault sequence with
- * appropriate error details and blocks further processing of the request/ response.
+ * Sentence Count Guardrail mediator.
+ * <p>
+ * A Synapse mediator that enforces content moderation by validating the number of sentences
+ * in a JSON payload against configured minimum and maximum bounds.
+ * <p>
+ * Supports selective validation through JsonPath expressions and optional inversion logic
+ * to define when mediation should block processing. If a violation occurs, a fault sequence
+ * is triggered with detailed assessment metadata attached.
  */
 public class SentenceCountGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(SentenceCountGuardrail.class);
@@ -57,10 +71,20 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
         // No specific resources to release
     }
 
+    /**
+     * Mediates an incoming message by validating its sentence count.
+     * <p>
+     * If the count violates configured bounds (considering inversion logic),
+     * the mediator triggers a fault sequence and halts further processing.
+     *
+     * @param messageContext the current message context.
+     * @return true if processing should continue, false if blocked due to sentence count violation.
+     */
+
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Executing SentenceCountGuardrail mediation");
+            logger.debug("SentenceCountGuardrail: Beginning guardrail evaluation.");
         }
 
         try {
@@ -70,17 +94,17 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
             if (!finalResult) {
                 // Set error properties in message context
                 messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        SentenceCountGuardrailConstants.WORD_COUNT_GUARDRAIL_ERROR_CODE);
+                        SentenceCountGuardrailConstants.ERROR_CODE);
                 messageContext.setProperty(SentenceCountGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
                 messageContext.setProperty(SentenceCountGuardrailConstants.CUSTOM_HTTP_SC,
-                        SentenceCountGuardrailConstants.WORD_COUNT_GUARDRAIL_ERROR_CODE);
+                        SentenceCountGuardrailConstants.ERROR_CODE);
 
                 // Build assessment details
                 String assessmentObject = buildAssessmentObject();
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
 
                 if (logger.isDebugEnabled()) {
-                    logger.debug("Initiating SentenceCountGuardrail fault sequence");
+                    logger.debug("SentenceCountGuardrail: Triggering fault sequence.");
                 }
 
                 Mediator faultMediator = messageContext.getSequence(SentenceCountGuardrailConstants.FAULT_SEQUENCE_KEY);
@@ -88,25 +112,46 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
                 return false; // Stop further processing
             }
         } catch (Exception e) {
-            logger.error("Error during SentenceCountGuardrail mediation", e);
+            logger.error("SentenceCountGuardrail: Error during guardrail mediation.", e);
         }
 
         return true;
     }
 
+    /**
+     * Validates the payload by counting sentences and checking if it falls within the allowed range.
+     *
+     * @param messageContext the current message context.
+     * @return true if the sentence count is within bounds, false otherwise.
+     */
     private boolean validatePayload(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Validating SentenceCountGuardrail payload");
+            logger.debug("SentenceCountGuardrail: Validating payload sentence count.");
         }
 
         int count = getSentenceCount(messageContext);
         return isCountWithinBounds(count);
     }
 
+    /**
+     * Checks whether the given sentence count falls within the configured minimum and maximum bounds.
+     *
+     * @param count the number of sentences detected.
+     * @return true if count is within [min, max], false otherwise.
+     */
     private boolean isCountWithinBounds(int count) {
         return this.min <= count && this.max >= count;
     }
 
+    /**
+     * Extracts the relevant JSON content and computes the sentence count.
+     * <p>
+     * If a JsonPath is configured, counts sentences only within the extracted section.
+     * Otherwise, counts sentences across the full JSON payload.
+     *
+     * @param messageContext the current message context.
+     * @return the number of sentences detected.
+     */
     private int getSentenceCount(MessageContext messageContext) {
         String jsonContent = extractJsonContent(messageContext);
         if (jsonContent == null || jsonContent.isEmpty()) {
@@ -122,10 +167,18 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
         return countSentences(JsonPath.read(jsonContent, this.jsonPath).toString());
     }
 
+    /**
+     * Counts the number of sentences in the given text.
+     * <p>
+     * Sentences are detected based on terminal punctuation marks (periods, exclamation points, question marks).
+     *
+     * @param text the text content to analyze.
+     * @return the number of sentences found, or zero if the text is empty.
+     */
     private int countSentences(String text) {
 
         if (logger.isDebugEnabled()) {
-            logger.debug("Counting sentences from text: " + text);
+            logger.debug("SentenceCountGuardrail: Counting sentences in extracted text.");
         }
 
         if (text == null || text.trim().isEmpty()) {
@@ -133,10 +186,10 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
         }
 
         // Remove quotes at beginning and end
-        String cleanedText = text.replaceAll("^\"|\"$", "").trim();
+        String cleanedText = text.replaceAll(SentenceCountGuardrailConstants.TEXT_CLEAN_REGEX, "").trim();
 
         // Split using regex that detects sentence-ending punctuation
-        String[] sentences = cleanedText.split("[.!?]");
+        String[] sentences = cleanedText.split(SentenceCountGuardrailConstants.SENTENCE_SPLIT_REGEX);
 
         // Handle empty string case after cleaning
         if (sentences.length == 1 && sentences[0].isEmpty()) {
@@ -146,7 +199,10 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
     }
 
     /**
-     * Extracts JSON content from the message context.
+     * Extracts the full JSON payload from the message context.
+     *
+     * @param messageContext The Synapse message context.
+     * @return The JSON content as a string, or {@code null} if unavailable.
      */
     public static String extractJsonContent(MessageContext messageContext) {
         org.apache.axis2.context.MessageContext axis2MC =
@@ -156,22 +212,25 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
 
     /**
      * Builds a JSON object containing assessment details from the guardrail response.
+     * This creates a structured representation of the guardrail findings to be included
+     * in error messages or for logging purposes.
      *
-     * @return A JSON object with assessment details
+     * @return A JSON string containing assessment details and guardrail action information
      */
     private String buildAssessmentObject() {
         if (logger.isDebugEnabled()) {
-            logger.debug("SentenceCountGuardrail assessment creation");
+            logger.debug("SentenceCountGuardrail: Building guardrail assessment object.");
         }
 
         JSONObject assessmentObject = new JSONObject();
 
-        assessmentObject.put("action", "GUARDRAIL_INTERVENED");
-        assessmentObject.put("actionReason", "Guardrail blocked.");
+        assessmentObject.put(SentenceCountGuardrailConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
+        assessmentObject.put(SentenceCountGuardrailConstants.ASSESSMENT_REASON, "Guardrail blocked.");
         String message = String.format(
                 "Violation of sentence count detected: expected %s %d %s %d sentences.",
                 doInvert ? "less than" : "between", this.min, doInvert ? "or more than" : "and", this.max
         );
+        assessmentObject.put(SentenceCountGuardrailConstants.ASSESSMENTS, message);
 
         return assessmentObject.toString();
     }

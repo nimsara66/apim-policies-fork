@@ -1,22 +1,36 @@
+/*
+ *
+ * Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
 package org.wso2.apim.policies.mediation.ai.prompt.template;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import com.jayway.jsonpath.JsonPath;
 import org.apache.axis2.AxisFault;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.synapse.ManagedLifecycle;
-import org.apache.synapse.Mediator;
 import org.apache.synapse.MessageContext;
-import org.apache.synapse.SynapseConstants;
 import org.apache.synapse.commons.json.JsonUtil;
 import org.apache.synapse.core.SynapseEnvironment;
 import org.apache.synapse.core.axis2.Axis2MessageContext;
 import org.apache.synapse.mediators.AbstractMediator;
-import org.json.JSONObject;
 
 import java.lang.reflect.Type;
 import java.net.URI;
@@ -29,20 +43,57 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Regex Guardrail mediator for WSO2 API Gateway.
- *
- * This mediator provides content filtering capabilities for API payloads using regular expression patterns.
- * It intercepts API requests or responses, validates the JSON content against configured regex patterns,
- * and can block requests that match (or optionally don't match) the specified patterns.
- *
- * Key features:
- * - Flexible pattern matching - Apply regex patterns to entire JSON payloads or specific fields
- * - JsonPath support - Target validation to specific parts of JSON payloads using JsonPath expressions
- * - Invertible logic - Block content that matches OR doesn't match patterns
- * - Custom error responses - Return detailed assessment information when content is blocked
- *
- * When content violates the guardrail settings, the mediator triggers a fault sequence with
- * appropriate error details and blocks further processing of the request/ response.
+ * PromptTemplate mediator.
+ * <p>
+ * <p>
+ * The PromptTemplate mediator scans JSON payloads for template references in the format
+ * {@code template://<template-name>?<param1>=<value1>&<param2>=<value2>} and replaces them
+ * with predefined templates where parameter placeholders are substituted with provided values.
+ * This is particularly useful for standardizing prompts across different API calls, especially
+ * when working with large language models or AI services.
+ * <p>
+ * Template references in the payload are processed using regex pattern matching and URI parsing.
+ * Each template placeholder in the format {@code [[parameter-name]]} is replaced with the
+ * corresponding parameter value from the template URI query string.
+ * <p>
+ * Configuration is provided through a JSON array of template objects, each containing a name and
+ * prompt definition:
+ * <pre>
+ * [
+ *   {
+ *     "name": "translate",
+ *     "prompt": "Translate the following text from [[from]] to [[to]]: [[text]]"
+ *   },
+ *   {
+ *     "name": "summarize",
+ *     "prompt": "Summarize the following content in [[length]] words: [[content]]"
+ *   }
+ * ]
+ * </pre>
+ * <p>
+ * Example usage in a payload:
+ * <pre>
+ * {
+ *   "messages": [
+ *     {
+ *       "role": "user",
+ *       "content": "template://translate?from=english&to=spanish&text=Hello world"
+ *     }
+ *   ]
+ * }
+ * </pre>
+ * <p>
+ * The mediator would transform this to:
+ * <pre>
+ * {
+ *   "messages": [
+ *     {
+ *       "role": "user",
+ *       "content": "Translate the following text from english to spanish: Hello world"
+ *     }
+ *   ]
+ * }
+ * </pre>
  */
 public class PromptTemplate extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(PromptTemplate.class);
@@ -51,7 +102,7 @@ public class PromptTemplate extends AbstractMediator implements ManagedLifecycle
     private final Map<String, String> promptTemplates = new HashMap<>();
 
     /**
-     * Initializes the RegexGuardrail mediator.
+     * Initializes the PromptTemplate mediator.
      *
      * @param synapseEnvironment The Synapse environment instance.
      */
@@ -70,24 +121,43 @@ public class PromptTemplate extends AbstractMediator implements ManagedLifecycle
         // No specific resources to release
     }
 
+    /**
+     * Mediates the message context by transforming the payload using prompt templates.
+     * <p>
+     * This method looks for placeholders in the JSON payload that match the predefined templates, and replaces
+     * them with the appropriate values. It logs the mediation progress and handles any exceptions that occur during
+     * the mediation process.
+     *
+     * @param messageContext The message context containing the JSON payload to be mediated.
+     * @return {@code true} to continue the mediation process.
+     */
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Executing PromptTemplate mediation");
+            logger.debug("PromptTemplate: Mediating message context with prompt templates.");
         }
 
         try {
             findAndTransformPayload(messageContext);
         } catch (Exception e) {
-            logger.error("Error during PromptTemplate mediation", e);
+            logger.error("PromptTemplate: Error during mediation of message context", e);
         }
 
         return true;
     }
 
+    /**
+     * Finds and transforms the payload in the message context by resolving template placeholders.
+     * <p>
+     * This method searches the JSON content for template placeholders in the form of
+     * {@code template://<template-name>?<params>} and replaces them with the corresponding template values.
+     *
+     * @param messageContext The message context containing the JSON payload.
+     * @throws AxisFault If an error occurs while modifying the payload.
+     */
     private void findAndTransformPayload(MessageContext messageContext) throws AxisFault {
         if (logger.isDebugEnabled()) {
-            logger.debug("PromptTemplate transforming payload");
+            logger.debug("PromptTemplate: Transforming JSON payload based on prompt templates.");
         }
 
         String jsonContent = extractJsonContent(messageContext);
@@ -137,10 +207,10 @@ public class PromptTemplate extends AbstractMediator implements ManagedLifecycle
                     // Directly replace in updatedJsonContent
                     updatedJsonContent = updatedJsonContent.replace(matched, resolvedPrompt);
                 } else {
-                    logger.warn("No prompt template found for: " + templateName);
+                    logger.warn("PromptTemplate: No prompt template found for: " + templateName);
                 }
             } catch (Exception e) {
-                logger.error("Error while transforming template for match: " + matched, e);
+                logger.error("PromptTemplate: Error while transforming template for match: " + matched, e);
             }
         }
 
@@ -152,7 +222,12 @@ public class PromptTemplate extends AbstractMediator implements ManagedLifecycle
     }
 
     /**
-     * Extracts JSON content from the message context.
+     * Extracts the JSON content from the provided message context.
+     * <p>
+     * This method retrieves the JSON payload from the message context and returns it as a string.
+     *
+     * @param messageContext The message context containing the JSON payload.
+     * @return The extracted JSON content as a string, or {@code null} if no JSON content is found.
      */
     public static String extractJsonContent(MessageContext messageContext) {
         org.apache.axis2.context.MessageContext axis2MC =
@@ -175,8 +250,8 @@ public class PromptTemplate extends AbstractMediator implements ManagedLifecycle
             List<Map<String, String>> templates = gson.fromJson(promptTemplateConfig, listType);
 
             for (Map<String, String> item : templates) {
-                String name = item.get("name");
-                String prompt = item.get("prompt");
+                String name = item.get(PromptTemplateConstants.PROMPT_TEMPLATE_NAME);
+                String prompt = item.get(PromptTemplateConstants.PROMPT_TEMPLATE_NAME);
                 promptTemplates.put(name, prompt);
             }
         } catch (Exception e) {

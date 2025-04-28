@@ -1,3 +1,23 @@
+/*
+ *
+ * Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
 package org.wso2.apim.policies.mediation.ai.regex.guardrail;
 
 import com.jayway.jsonpath.JsonPath;
@@ -17,20 +37,14 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 /**
- * Regex Guardrail mediator for WSO2 API Gateway.
- *
- * This mediator provides content filtering capabilities for API payloads using regular expression patterns.
- * It intercepts API requests or responses, validates the JSON content against configured regex patterns,
- * and can block requests that match (or optionally don't match) the specified patterns.
- *
- * Key features:
- * - Flexible pattern matching - Apply regex patterns to entire JSON payloads or specific fields
- * - JsonPath support - Target validation to specific parts of JSON payloads using JsonPath expressions
- * - Invertible logic - Block content that matches OR doesn't match patterns
- * - Custom error responses - Return detailed assessment information when content is blocked
- *
- * When content violates the guardrail settings, the mediator triggers a fault sequence with
- * appropriate error details and blocks further processing of the request/ response.
+ * Regex Guardrail mediator.
+ * <p>
+ * A mediator that performs regex-based validation on payloads according to specified patterns.
+ * This guardrail can be configured with JSON path expressions to target specific parts of JSON payloads
+ * and apply regex pattern validation against them. The validation result can be inverted if needed.
+ * <p>
+ * When validation fails, the mediator triggers a fault sequence and enriches the message context
+ * with appropriate error details.
  */
 public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(RegexGuardrail.class);
@@ -63,7 +77,7 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Executing RegexGuardrail mediation");
+            logger.debug("RegexGuardrail: Beginning payload validation.");
         }
 
         try {
@@ -73,17 +87,17 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
             if (!finalResult) {
                 // Set error properties in message context
                 messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        RegexGuardrailConstants.REGEX_GUARDRAIL_ERROR_CODE);
+                        RegexGuardrailConstants.ERROR_CODE);
                 messageContext.setProperty(RegexGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
                 messageContext.setProperty(RegexGuardrailConstants.CUSTOM_HTTP_SC,
-                        RegexGuardrailConstants.REGEX_GUARDRAIL_ERROR_CODE);
+                        RegexGuardrailConstants.ERROR_CODE);
 
                 // Build assessment details
                 String assessmentObject = buildAssessmentObject();
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
 
                 if (logger.isDebugEnabled()) {
-                    logger.debug("Initiating RegexGuardrail fault sequence");
+                    logger.debug("RegexGuardrail: Validation failed - triggering fault sequence.");
                 }
 
                 Mediator faultMediator = messageContext.getSequence(RegexGuardrailConstants.FAULT_SEQUENCE_KEY);
@@ -91,15 +105,23 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
                 return false; // Stop further processing
             }
         } catch (Exception e) {
-            logger.error("Error during RegexGuardrail mediation", e);
+            logger.error("RegexGuardrail: Exception occurred during mediation.", e);
         }
 
         return true;
     }
 
+    /**
+     * Validates the payload of the message against the configured regex pattern.
+     * If a JSON path is specified, validation is performed only on the extracted value,
+     * otherwise the entire payload is validated.
+     *
+     * @param messageContext The message context containing the payload to validate
+     * @return {@code true} if the payload matches the pattern, {@code false} otherwise
+     */
     private boolean validatePayload(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Validating RegexGuardrail payload");
+            logger.debug("RegexGuardrail: Extracting content for validation.");
         }
 
         String jsonContent = extractJsonContent(messageContext);
@@ -123,6 +145,10 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
 
     /**
      * Extracts JSON content from the message context.
+     * This utility method converts the Axis2 message payload to a JSON string.
+     *
+     * @param messageContext The message context containing the JSON payload
+     * @return The JSON payload as a string, or null if extraction fails
      */
     public static String extractJsonContent(MessageContext messageContext) {
         org.apache.axis2.context.MessageContext axis2MC =
@@ -131,9 +157,10 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
     }
 
     /**
-     * Builds a JSON object containing assessment details from the guardrail response.
+     * Builds a JSON object containing assessment details for guardrail responses.
+     * This JSON includes information about why the guardrail intervened.
      *
-     * @return A JSON object with assessment details
+     * @return A JSON string representing the assessment object
      */
     private String buildAssessmentObject() {
         if (logger.isDebugEnabled()) {
@@ -142,9 +169,10 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
 
         JSONObject assessmentObject = new JSONObject();
 
-        assessmentObject.put("action", "GUARDRAIL_INTERVENED");
-        assessmentObject.put("actionReason", "Guardrail blocked.");
-        assessmentObject.put("assessments", "Violation of regular expression: " + regex + " detected.");
+        assessmentObject.put(RegexGuardrailConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
+        assessmentObject.put(RegexGuardrailConstants.ASSESSMENT_REASON, "Guardrail blocked.");
+        assessmentObject.put(RegexGuardrailConstants.ASSESSMENTS,
+                "Violation of regular expression: " + regex + " detected.");
         return assessmentObject.toString();
     }
 
@@ -159,8 +187,11 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
 
         try {
             this.pattern = Pattern.compile(regex);
+            if (logger.isDebugEnabled()) {
+                logger.debug("RegexGuardrail: Regex pattern compiled successfully: " + regex);
+            }
         } catch (PatternSyntaxException e) {
-            logger.error("Invalid regex pattern: " + regex, e);
+            logger.error("RegexGuardrail: Invalid regex pattern: " + regex, e);
         }
     }
 

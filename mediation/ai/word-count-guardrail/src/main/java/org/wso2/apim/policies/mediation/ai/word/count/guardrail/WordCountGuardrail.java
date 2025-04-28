@@ -1,3 +1,23 @@
+/*
+ *
+ * Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
 package org.wso2.apim.policies.mediation.ai.word.count.guardrail;
 
 import com.jayway.jsonpath.JsonPath;
@@ -14,20 +34,15 @@ import org.apache.synapse.mediators.AbstractMediator;
 import org.json.JSONObject;
 
 /**
- * Regex Guardrail mediator for WSO2 API Gateway.
- *
- * This mediator provides content filtering capabilities for API payloads using regular expression patterns.
- * It intercepts API requests or responses, validates the JSON content against configured regex patterns,
- * and can block requests that match (or optionally don't match) the specified patterns.
- *
- * Key features:
- * - Flexible pattern matching - Apply regex patterns to entire JSON payloads or specific fields
- * - JsonPath support - Target validation to specific parts of JSON payloads using JsonPath expressions
- * - Invertible logic - Block content that matches OR doesn't match patterns
- * - Custom error responses - Return detailed assessment information when content is blocked
- *
- * When content violates the guardrail settings, the mediator triggers a fault sequence with
- * appropriate error details and blocks further processing of the request/ response.
+ * Word Count Guardrail mediator.
+ * <p>
+ * A mediator that enforces minimum and maximum word count constraints on API payloads.
+ * It can operate in both blocking mode (where non-compliant payloads are rejected)
+ * and inverted mode (where payloads must fall outside the specified range).
+ * <p>
+ * Supports evaluating the entire JSON payload or specific sections using JsonPath expressions.
+ * Upon violation, detailed error information is populated into the message context,
+ * and an optional fault sequence can be invoked to handle the error gracefully.
  */
 public class WordCountGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(WordCountGuardrail.class);
@@ -38,7 +53,7 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
     private boolean doInvert = false;
 
     /**
-     * Initializes the RegexGuardrail mediator.
+     * Initializes the WordCountGuardrail mediator.
      *
      * @param synapseEnvironment The Synapse environment instance.
      */
@@ -50,17 +65,27 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
     }
 
     /**
-     * Destroys the RegexGuardrail mediator instance and releases any allocated resources.
+     * Destroys the WordCountGuardrail mediator instance and releases any allocated resources.
      */
     @Override
     public void destroy() {
         // No specific resources to release
     }
 
+    /**
+     * Executes the WordCountGuardrail mediation logic.
+     * <p>
+     * Validates the payload's word count against the configured constraints.
+     * If validation fails, populates error details into the message context and optionally
+     * invokes a configured fault sequence to handle the violation.
+     *
+     * @param messageContext The message context containing the payload to validate.
+     * @return {@code true} if mediation should continue, {@code false} if processing should halt.
+     */
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Executing WordCountGuardrail mediation");
+            logger.debug("WordCountGuardrail: Beginning guardrail evaluation.");
         }
 
         try {
@@ -70,17 +95,17 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
             if (!finalResult) {
                 // Set error properties in message context
                 messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        WordCountGuardrailConstants.WORD_COUNT_GUARDRAIL_ERROR_CODE);
+                        WordCountGuardrailConstants.ERROR_CODE);
                 messageContext.setProperty(WordCountGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
                 messageContext.setProperty(WordCountGuardrailConstants.CUSTOM_HTTP_SC,
-                        WordCountGuardrailConstants.WORD_COUNT_GUARDRAIL_ERROR_CODE);
+                        WordCountGuardrailConstants.ERROR_CODE);
 
                 // Build assessment details
                 String assessmentObject = buildAssessmentObject();
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
 
                 if (logger.isDebugEnabled()) {
-                    logger.debug("Initiating WordCountGuardrail fault sequence");
+                    logger.debug("WordCountGuardrail: Triggering fault sequence.");
                 }
 
                 Mediator faultMediator = messageContext.getSequence(WordCountGuardrailConstants.FAULT_SEQUENCE_KEY);
@@ -88,25 +113,43 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
                 return false; // Stop further processing
             }
         } catch (Exception e) {
-            logger.error("Error during WordCountGuardrail mediation", e);
+            logger.error("WordCountGuardrail: Error during guardrail mediation.", e);
         }
 
         return true;
     }
 
+    /**
+     * Validates whether the word count of the extracted payload falls within the configured bounds.
+     *
+     * @param messageContext The message context containing the payload.
+     * @return {@code true} if the payload satisfies the word count constraints; {@code false} otherwise.
+     */
     private boolean validatePayload(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Validating WordCountGuardrail payload");
+            logger.debug("WordCountGuardrail: Validating payload word count.");
         }
 
         int count = getWordCount(messageContext);
         return isCountWithinBounds(count);
     }
 
+    /**
+     * Checks whether the given word count is within the configured minimum and maximum bounds.
+     *
+     * @param count The number of words to evaluate.
+     * @return {@code true} if the word count is within bounds; {@code false} otherwise.
+     */
     private boolean isCountWithinBounds(int count) {
         return this.min <= count && this.max >= count;
     }
 
+    /**
+     * Extracts and counts the number of words in the payload, optionally using a JsonPath expression.
+     *
+     * @param messageContext The message context containing the payload.
+     * @return The number of words detected.
+     */
     private int getWordCount(MessageContext messageContext) {
         String jsonContent = extractJsonContent(messageContext);
         if (jsonContent == null || jsonContent.isEmpty()) {
@@ -122,10 +165,19 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
         return countWords(JsonPath.read(jsonContent, this.jsonPath).toString());
     }
 
+    /**
+     * Counts the number of words in a given text.
+     * <p>
+     * Words are separated by whitespace. Quotes at the beginning and end of the text are removed
+     * before counting.
+     *
+     * @param text The text to analyze.
+     * @return The number of words found.
+     */
     private int countWords(String text) {
 
         if (logger.isDebugEnabled()) {
-            logger.debug("Counting words from text: " + text);
+            logger.debug("WordCountGuardrail: Counting words in extracted text.");
         }
 
         if (text == null || text.trim().isEmpty()) {
@@ -133,11 +185,11 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
         }
 
         // Remove quotes at beginning and end
-        String cleanedText = text.replaceAll("^\"|\"$", "").trim();
+        String cleanedText = text.replaceAll(WordCountGuardrailConstants.TEXT_CLEAN_REGEX, "").trim();
 
         // Split using regex that detects word-ending punctuation
         String[] words =
-                cleanedText.split("\\s+");
+                cleanedText.split(WordCountGuardrailConstants.WORD_SPLIT_REGEX);
 
         // Handle empty string case after cleaning
         if (words.length == 1 && words[0].isEmpty()) {
@@ -148,6 +200,10 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
 
     /**
      * Extracts JSON content from the message context.
+     * This utility method converts the Axis2 message payload to a JSON string.
+     *
+     * @param messageContext The message context containing the JSON payload
+     * @return The JSON payload as a string, or null if extraction fails
      */
     public static String extractJsonContent(MessageContext messageContext) {
         org.apache.axis2.context.MessageContext axis2MC =
@@ -156,9 +212,10 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
     }
 
     /**
-     * Builds a JSON object containing assessment details from the guardrail response.
+     * Builds a JSON object containing assessment details for guardrail responses.
+     * This JSON includes information about why the guardrail intervened.
      *
-     * @return A JSON object with assessment details
+     * @return A JSON string representing the assessment object
      */
     private String buildAssessmentObject() {
         if (logger.isDebugEnabled()) {
@@ -167,12 +224,13 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
 
         JSONObject assessmentObject = new JSONObject();
 
-        assessmentObject.put("action", "GUARDRAIL_INTERVENED");
-        assessmentObject.put("actionReason", "Guardrail blocked.");
+        assessmentObject.put(WordCountGuardrailConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
+        assessmentObject.put(WordCountGuardrailConstants.ASSESSMENT_REASON, "Guardrail blocked.");
         String message = String.format(
                 "Violation of word count detected: expected %s %d %s %d words.",
                 doInvert ? "less than" : "between", this.min, doInvert ? "or more than" : "and", this.max
         );
+        assessmentObject.put(WordCountGuardrailConstants.ASSESSMENTS, message);
 
         return assessmentObject.toString();
     }

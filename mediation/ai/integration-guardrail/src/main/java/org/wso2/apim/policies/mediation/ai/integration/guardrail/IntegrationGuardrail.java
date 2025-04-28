@@ -1,3 +1,23 @@
+/*
+ *
+ * Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
 package org.wso2.apim.policies.mediation.ai.integration.guardrail;
 
 import com.google.gson.Gson;
@@ -32,20 +52,14 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Regex Guardrail mediator for WSO2 API Gateway.
- *
- * This mediator provides content filtering capabilities for API payloads using regular expression patterns.
- * It intercepts API requests or responses, validates the JSON content against configured regex patterns,
- * and can block requests that match (or optionally don't match) the specified patterns.
- *
- * Key features:
- * - Flexible pattern matching - Apply regex patterns to entire JSON payloads or specific fields
- * - JsonPath support - Target validation to specific parts of JSON payloads using JsonPath expressions
- * - Invertible logic - Block content that matches OR doesn't match patterns
- * - Custom error responses - Return detailed assessment information when content is blocked
- *
- * When content violates the guardrail settings, the mediator triggers a fault sequence with
- * appropriate error details and blocks further processing of the request/ response.
+ * Integration Guardrail mediator.
+ * <p>
+ * A mediator that integrates with an external webhook to validate API payloads (requests or responses)
+ * against custom logic or policies defined outside the gateway.
+ * <p>
+ * Sends the extracted payload to a webhook URL via HTTP POST and interprets the webhook's verdict.
+ * If a payload violation is detected, detailed error information is populated into the message context,
+ * and an optional fault sequence can be invoked to handle the violation gracefully.
  */
 public class IntegrationGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(IntegrationGuardrail.class);
@@ -70,13 +84,22 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
     }
 
     /**
-     * Destroys the RegexGuardrail mediator instance and releases any allocated resources.
+     * Destroys the IntegrationGuardrail mediator instance and releases any allocated resources.
      */
     @Override
     public void destroy() {
         // No specific resources to release
     }
 
+    /**
+     * Executes the IntegrationGuardrail mediation logic.
+     * <p>
+     * Validates the payload by sending it to the configured webhook. If the webhook indicates a violation,
+     * the mediator sets appropriate error properties and triggers a fault sequence if configured.
+     *
+     * @param messageContext The message context containing the payload to validate.
+     * @return {@code true} if mediation should continue, {@code false} if processing should halt.
+     */
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
@@ -87,10 +110,10 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
             if (!validatePayload(messageContext)) {
                 // Set error properties in message context
                 messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        IntegrationGuardrailConstants.JSON_SCHEMA_GUARDRAIL_ERROR_CODE);
+                        IntegrationGuardrailConstants.ERROR_CODE);
                 messageContext.setProperty(IntegrationGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
                 messageContext.setProperty(IntegrationGuardrailConstants.CUSTOM_HTTP_SC,
-                        IntegrationGuardrailConstants.JSON_SCHEMA_GUARDRAIL_ERROR_CODE);
+                        IntegrationGuardrailConstants.ERROR_CODE);
 
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, this.assessment);
 
@@ -109,6 +132,12 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
         return true;
     }
 
+    /**
+     * Validates the payload by posting it to the configured webhook and interpreting the response.
+     *
+     * @param messageContext The message context containing the payload.
+     * @return {@code true} if the payload passes validation; {@code false} if a violation is detected.
+     */
     private boolean validatePayload(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
             logger.debug("Validating JSONSchemaGuardrail payload");
@@ -118,10 +147,12 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
 
         if (!messageContext.isResponse()) {
             // Request flow
-            guardrailMetadata.put("requestPayload", extractJsonContent(messageContext));
+            guardrailMetadata.put(IntegrationGuardrailConstants.REQUEST_PAYLOAD_KEY,
+                    extractJsonContent(messageContext));
         } else {
             // Response flow
-            guardrailMetadata.put("responsePayload", extractJsonContent(messageContext));
+            guardrailMetadata.put(IntegrationGuardrailConstants.RESPONSE_PAYLOAD_KEY,
+                    extractJsonContent(messageContext));
         }
 
         if (this.url != null) {
@@ -131,7 +162,8 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
 
                 // Build assessment details
                 buildAssessmentObject(jsonResponse);
-                return jsonResponse.has("verdict") && jsonResponse.get("verdict").getAsBoolean();
+                return jsonResponse.has(IntegrationGuardrailConstants.VERDICT)
+                        && jsonResponse.get(IntegrationGuardrailConstants.VERDICT).getAsBoolean();
             } catch (Exception e) {
                 log.error("Error sending webhook POST request.", e);
                 // If a verdict cannot be extracted, assume the request/ response is valid
@@ -143,7 +175,13 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
     }
 
     /**
-     * Sends a POST request to a webhook with the provided metadata.
+     * Sends a POST request to the configured webhook URL with the provided metadata.
+     * <p>
+     * Custom headers can also be included if specified.
+     *
+     * @param metadata A map containing payload metadata to be sent.
+     * @return The webhook's response body as a string.
+     * @throws Exception If an error occurs while sending the request or receiving the response.
      */
     private String sendPostRequestToWebhook(Map<String, Object> metadata) throws Exception {
 
@@ -158,7 +196,7 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
             HttpPost httpPost = new HttpPost(webhookUrl);
 
             // Set default Content-Type header
-            httpPost.setHeader("Content-Type", "application/json");
+            httpPost.setHeader(IntegrationGuardrailConstants.CONTENT_TYPE_HEADER, "application/json");
 
             // Apply custom headers if provided
             if (this.headers != null && !this.headers.isEmpty()) {
@@ -209,6 +247,10 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
 
     /**
      * Extracts JSON content from the message context.
+     * This utility method converts the Axis2 message payload to a JSON string.
+     *
+     * @param messageContext The message context containing the JSON payload
+     * @return The JSON payload as a string, or null if extraction fails
      */
     public static String extractJsonContent(MessageContext messageContext) {
         org.apache.axis2.context.MessageContext axis2MC =
@@ -217,7 +259,12 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
     }
 
     /**
-     * Builds a JSON object containing assessment details from the guardrail response.
+     * Builds an assessment object containing details from the webhook response.
+     * <p>
+     * Populates fields such as action, actionReason, and assessments based on the webhook response,
+     * or defaults if fields are not present.
+     *
+     * @param response The JSON object received from the webhook.
      */
     private void buildAssessmentObject(JsonObject response) {
         if (logger.isDebugEnabled()) {
@@ -226,12 +273,16 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
 
         JSONObject assessmentObject = new JSONObject();
 
-        assessmentObject.put("action", response.has("action")
-                ? response.get("action"): "GUARDRAIL_INTERVENED");
-        assessmentObject.put("actionReason", response.has("actionReason")
-                ? response.get("actionReason"): "Guardrail blocked.");
-        assessmentObject.put("assessments", response.has("assessments")
-                ? response.get("assessments"): "Violation of integration guardrail detected.");
+        assessmentObject.put(IntegrationGuardrailConstants.ASSESSMENT_ACTION,
+                response.has(IntegrationGuardrailConstants.ASSESSMENT_ACTION)
+                ? response.get(IntegrationGuardrailConstants.ASSESSMENT_ACTION): "GUARDRAIL_INTERVENED");
+        assessmentObject.put(IntegrationGuardrailConstants.ASSESSMENT_REASON,
+                response.has(IntegrationGuardrailConstants.ASSESSMENT_REASON)
+                ? response.get(IntegrationGuardrailConstants.ASSESSMENT_REASON): "Guardrail blocked.");
+        assessmentObject.put(IntegrationGuardrailConstants.ASSESSMENTS,
+                response.has(IntegrationGuardrailConstants.ASSESSMENTS)
+                ? response.get(IntegrationGuardrailConstants.ASSESSMENTS):
+                        "Violation of integration guardrail detected.");
 
         this.assessment = assessmentObject.toString();
     }
