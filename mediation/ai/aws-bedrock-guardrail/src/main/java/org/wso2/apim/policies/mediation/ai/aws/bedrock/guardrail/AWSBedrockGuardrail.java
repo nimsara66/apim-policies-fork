@@ -2,18 +2,21 @@ package org.wso2.apim.policies.mediation.ai.aws.bedrock.guardrail;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.jayway.jsonpath.DocumentContext;
+import com.jayway.jsonpath.JsonPath;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.synapse.ManagedLifecycle;
 import org.apache.synapse.Mediator;
 import org.apache.synapse.MessageContext;
 import org.apache.synapse.SynapseConstants;
+import org.apache.synapse.commons.json.JsonUtil;
 import org.apache.synapse.core.SynapseEnvironment;
+import org.apache.synapse.core.axis2.Axis2MessageContext;
 import org.apache.synapse.mediators.AbstractMediator;
 import org.json.JSONObject;
 
 import java.io.IOException;
-import java.util.HashMap;
 import java.util.Map;
 import javax.xml.stream.XMLStreamException;
 
@@ -90,6 +93,11 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
         try {
             // Extract the request/ response body from message context
             String jsonContent = AWSBedrockUtils.extractJsonContent(messageContext);
+
+            if (this.jsonPath != null && !this.jsonPath.trim().isEmpty()) {
+                String content = JsonPath.read(jsonContent, this.jsonPath).toString();
+                jsonContent = content.replaceAll("^\"|\"$", "").trim();
+            }
 
             // Create request payload for AWS Bedrock
             String payload = AWSBedrockUtils.createBedrockRequestPayload(jsonContent, messageContext.isResponse());
@@ -172,6 +180,93 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
                 faultMediator.mediate(messageContext);
                 return false; // Stop further processing
             }
+
+            // Check if guardrail masked any PII
+            if (responseBody.has("action") &&
+                    "Guardrail masked.".equals(responseBody.get("actionReason").asText())) {
+
+                if (logger.isDebugEnabled()) {
+                    logger.debug("AWS Bedrock Guardrail intervention detected in response: PII");
+                }
+
+                JsonNode output = responseBody.get("output");
+                if (output != null && output.isArray() && !output.isEmpty()) {
+                    JsonNode firstOutput = output.get(0);
+                    if (firstOutput.has("text")) {
+                        String text = firstOutput.get("text").asText();
+
+                        if (this.jsonPath != null && !this.jsonPath.trim().isEmpty()) {
+                            String jsonContent = AWSBedrockUtils.extractJsonContent(messageContext);
+                            DocumentContext ctx = JsonPath.parse(jsonContent);
+                            ctx.set(this.jsonPath, text);
+                            text = ctx.jsonString();
+                        }
+
+                        org.apache.axis2.context.MessageContext axis2MC =
+                                ((Axis2MessageContext) messageContext).getAxis2MessageContext();
+                        JsonUtil.getNewJsonPayload(axis2MC, text,
+                                true, true);
+                    }
+                }
+
+                if (logger.isDebugEnabled()) {
+                    logger.debug("Successfully masked the payload");
+                }
+            }
+        } else if (redactPII) {
+
+            if (logger.isDebugEnabled()) {
+                logger.debug("AWS Bedrock Guardrail Redacting PII if detected");
+            }
+
+            JsonNode sensitiveInformationPolicy = responseBody.path("assessments").path(0)
+                    .get("sensitiveInformationPolicy");
+            if (sensitiveInformationPolicy == null) return true;
+
+            String jsonContent = AWSBedrockUtils.extractJsonContent(messageContext);
+            String initialPayload = jsonContent;
+
+            if (this.jsonPath != null && !this.jsonPath.trim().isEmpty()) {
+                String content = JsonPath.read(jsonContent, this.jsonPath).toString();
+                jsonContent = content.replaceAll("^\"|\"$", "").trim();
+            }
+
+            // Process piiEntities
+            JsonNode piiEntities = sensitiveInformationPolicy.get("piiEntities");
+            if (piiEntities != null && piiEntities.isArray()) {
+                for (JsonNode entity : piiEntities) {
+                    if (entity.path("detected").asBoolean()) {
+                        String match = entity.path("match").asText();
+                        String type = entity.path("type").asText();
+                        jsonContent = AWSBedrockUtils
+                                .replaceExactMatch(jsonContent, match, "[" + type + "]");
+                    }
+                }
+            }
+
+            // Process regexes
+            JsonNode regexes = sensitiveInformationPolicy.get("regexes");
+            if (regexes != null && regexes.isArray()) {
+                for (JsonNode regexNode : regexes) {
+                    if (regexNode.path("detected").asBoolean()) {
+                        String match = regexNode.path("match").asText();
+                        String name = regexNode.path("name").asText();
+                        jsonContent = AWSBedrockUtils
+                                .replaceExactMatch(jsonContent, match, "[" + name.toUpperCase() + "]");
+                    }
+                }
+            }
+
+            if (this.jsonPath != null && !this.jsonPath.trim().isEmpty()) {
+                DocumentContext ctx = JsonPath.parse(initialPayload);
+                ctx.set(this.jsonPath, jsonContent);
+                jsonContent = ctx.jsonString();
+            }
+
+            org.apache.axis2.context.MessageContext axis2MC =
+                    ((Axis2MessageContext) messageContext).getAxis2MessageContext();
+            JsonUtil.getNewJsonPayload(axis2MC, jsonContent,
+                    true, true);
         }
 
         return true; // Continue processing

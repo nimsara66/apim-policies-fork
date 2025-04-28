@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>org.wso2.apim.policies</groupId>
@@ -8,9 +10,9 @@
         <relativePath>../../../pom.xml</relativePath>
     </parent>
 
-    <artifactId>org.wso2.apim.policies.mediation.ai.url-guardrail</artifactId>
+    <artifactId>org.wso2.apim.policies.mediation.ai.prompt-template</artifactId>
     <packaging>jar</packaging>
-    <name>WSO2 APIM Mediation Policies - URL Guardrail</name>
+    <name>WSO2 APIM Mediation Policies - AI Prompt Template</name>
 
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
@@ -106,7 +108,7 @@
                         <Bundle-SymbolicName>${project.artifactId}</Bundle-SymbolicName>
                         <Bundle-Name>${project.artifactId}</Bundle-Name>
                         <Export-Package>
-                            org.wso2.apim.policies.mediation.ai.url.guardrail.*;version="${project.version}",
+                            org.wso2.apim.policies.mediation.ai.prompt.template.*;version="${project.version}",
                         </Export-Package>
                         <Import-Package>
                             !javax.xml.soap,

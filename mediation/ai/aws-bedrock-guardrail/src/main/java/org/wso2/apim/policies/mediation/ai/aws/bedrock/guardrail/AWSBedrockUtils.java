@@ -53,6 +53,13 @@ public class AWSBedrockUtils {
         return JsonUtil.jsonPayloadToString(axis2MC);
     }
 
+    public static String replaceExactMatch(String content, String target, String replacement) {
+        // Escape regex special characters in the match string
+        String escapedTarget = Pattern.quote(target);
+        // Replace all exact matches
+        return content.replaceAll(escapedTarget, Matcher.quoteReplacement(replacement));
+    }
+
     /**
      * Makes an HTTP POST request to AWS Bedrock Guardrail API.
      *

@@ -20,6 +20,9 @@
         <module>sentence-count-guardrail</module>
         <module>json-schema-guardrail</module>
         <module>integration-guardrail</module>
+        <module>url-guardrail</module>
+        <module>prompt-template</module>
+        <module>prompt-decorator</module>
     </modules>
 
     <properties>

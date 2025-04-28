@@ -131,8 +131,17 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
         if (text == null || text.trim().isEmpty()) {
             return 0;
         }
+
+        // Remove quotes at beginning and end
+        String cleanedText = text.replaceAll("^\"|\"$", "").trim();
+
         // Split using regex that detects sentence-ending punctuation
-        String[] sentences = text.split("(?<=[.!?]|[.!?][\"')\\]])(?=\\s+[A-Z0-9]|$)");
+        String[] sentences = cleanedText.split("[.!?]");
+
+        // Handle empty string case after cleaning
+        if (sentences.length == 1 && sentences[0].isEmpty()) {
+            return 0;
+        }
         return sentences.length;
     }
 

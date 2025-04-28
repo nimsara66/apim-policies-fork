@@ -131,9 +131,18 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
         if (text == null || text.trim().isEmpty()) {
             return 0;
         }
+
+        // Remove quotes at beginning and end
+        String cleanedText = text.replaceAll("^\"|\"$", "").trim();
+
         // Split using regex that detects word-ending punctuation
         String[] words =
-                text.split("\\b(?:[a-zA-Z0-9]+(?:['\\-_][a-zA-Z0-9]+)*|[^\\s\\p{P}\\p{Z}\\p{C}])+\\b");
+                cleanedText.split("\\s+");
+
+        // Handle empty string case after cleaning
+        if (words.length == 1 && words[0].isEmpty()) {
+            return 0;
+        }
         return words.length;
     }
 

@@ -112,8 +112,13 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
             return pattern.matcher(jsonContent).find();
         }
 
+        String content = JsonPath.read(jsonContent, this.jsonPath).toString();
+
+        // Remove quotes at beginning and end
+        String cleanedText = content.replaceAll("^\"|\"$", "").trim();
+
         // Check if any extracted value by json path matches the regex pattern
-        return pattern.matcher(JsonPath.read(jsonContent, this.jsonPath).toString()).find();
+        return pattern.matcher(cleanedText).find();
     }
 
     /**

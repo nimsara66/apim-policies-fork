@@ -11,13 +11,20 @@ import org.apache.synapse.commons.json.JsonUtil;
 import org.apache.synapse.core.SynapseEnvironment;
 import org.apache.synapse.core.axis2.Axis2MessageContext;
 import org.apache.synapse.mediators.AbstractMediator;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
+import java.util.stream.Collectors;
 
 /**
  * Regex Guardrail mediator for WSO2 API Gateway.
@@ -39,7 +46,7 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(URLGuardrail.class);
 
     private String jsonPath = "";
-    private boolean doInvert = false;
+    private boolean onlyDNS = false;
 
     /**
      * Initializes the URLGuardrail mediator.
@@ -69,15 +76,14 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
 
         try {
             boolean validationResult = validatePayload(messageContext);
-            boolean finalResult = doInvert != validationResult;
 
-            if (!finalResult) {
+            if (!validationResult) {
                 // Set error properties in message context
                 messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        JSONSchemaGuardrailConstants.JSON_SCHEMA_GUARDRAIL_ERROR_CODE);
-                messageContext.setProperty(JSONSchemaGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
-                messageContext.setProperty(JSONSchemaGuardrailConstants.CUSTOM_HTTP_SC,
-                        JSONSchemaGuardrailConstants.JSON_SCHEMA_GUARDRAIL_ERROR_CODE);
+                        URLGuardrailConstants.JSON_SCHEMA_GUARDRAIL_ERROR_CODE);
+                messageContext.setProperty(URLGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
+                messageContext.setProperty(URLGuardrailConstants.CUSTOM_HTTP_SC,
+                        URLGuardrailConstants.JSON_SCHEMA_GUARDRAIL_ERROR_CODE);
 
                 // Build assessment details
                 String assessmentObject = buildAssessmentObject();
@@ -87,7 +93,7 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
                     logger.debug("Initiating JSONSchemaGuardrail fault sequence");
                 }
 
-                Mediator faultMediator = messageContext.getSequence(JSONSchemaGuardrailConstants.FAULT_SEQUENCE_KEY);
+                Mediator faultMediator = messageContext.getSequence(URLGuardrailConstants.FAULT_SEQUENCE_KEY);
                 faultMediator.mediate(messageContext);
                 return false; // Stop further processing
             }
@@ -118,23 +124,95 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
     }
 
     /**
-     * Validates a JSON string against the configured schema.
+     * Validates URLs found in a JSON string, either via DNS or full HTTP checks.
+     *
+     * @param input JSON string to validate
+     * @return true if all validations pass, false otherwise
      */
     private boolean validateJsonAgainstURL(String input) {
-
         if (logger.isDebugEnabled()) {
-            logger.debug("URLGuardrail validating content urls");
+            logger.debug("URLGuardrail validating content URLs");
         }
 
+        List<String> urls = extractUrls(input);
+        if (urls.isEmpty()) return true;
+
+        List<CompletableFuture<Boolean>> futures = urls.stream()
+                .map(url -> CompletableFuture.supplyAsync(() -> onlyDNS ? checkDNS(url) : checkUrl(url)))
+                .collect(Collectors.toList());
+
+        // Wait for all tasks to complete
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        // Aggregate results
+        return futures.stream().map(CompletableFuture::join).allMatch(Boolean::booleanValue);
+    }
+
+    /**
+     * Extracts all URLs from the input string using a simple regex.
+     *
+     * @param input input string containing potential URLs
+     * @return list of extracted URLs
+     */
+    private List<String> extractUrls(String input) {
         Pattern urlPattern = Pattern.compile("https?://[^\\s,\"'{}\\[\\]]+");
-        Matcher urlMatcher = urlPattern.matcher(input);
+        Matcher matcher = urlPattern.matcher(input);
 
         List<String> urls = new ArrayList<>();
-        while (urlMatcher.find()) {
-            urls.add(urlMatcher.group(0));
+        while (matcher.find()) {
+            urls.add(matcher.group());
         }
-        return false;
+        return urls;
     }
+
+    private boolean checkUrl(String target) {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(target);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("HEAD");
+            connection.setRequestProperty("User-Agent", "URLValidator/1.0");
+            connection.setConnectTimeout(3000);
+            connection.setReadTimeout(3000);
+            connection.connect();
+
+            int responseCode = connection.getResponseCode();
+            return responseCode >= 200 && responseCode < 400;
+        } catch (IOException e) {
+            return false;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private boolean checkDNS(String target) {
+        try {
+            URL url = new URL(target);
+            String host = url.getHost();
+
+            String dnsUrl = "https://1.1.1.1/dns-query?name=" + host;
+            HttpURLConnection connection = (HttpURLConnection) new URL(dnsUrl).openConnection();
+            connection.setRequestProperty("Accept", "application/dns-json");
+            connection.setConnectTimeout(3000);
+            connection.setReadTimeout(3000);
+
+            InputStream inputStream = connection.getInputStream();
+            String responseBody = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+            inputStream.close();
+
+            // Parse JSON to check DNS status and answer
+            JSONObject json = new JSONObject(responseBody);
+            int status = json.getInt("Status");
+            JSONArray answers = json.optJSONArray("Answer");
+
+            return status == 0 && answers != null && answers.length() > 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
 
     /**
      * Extracts JSON content from the message context.
@@ -159,24 +237,8 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
 
         assessmentObject.put("action", "GUARDRAIL_INTERVENED");
         assessmentObject.put("actionReason", "Guardrail blocked.");
-        assessmentObject.put("assessments", "Violation of regular expression: " + schema + " detected.");
+        assessmentObject.put("assessments", "Violation of url validity detected.");
         return assessmentObject.toString();
-    }
-
-    public String getSchema() {
-
-        return schema;
-    }
-
-    public void setSchema(String schema) {
-
-        this.schema = schema;
-
-        try {
-            this.schemaObj = SchemaLoader.load(new JSONObject(schema));
-        } catch (PatternSyntaxException e) {
-            logger.error("Invalid JSON schema: " + schema, e);
-        }
     }
 
     public String getJsonPath() {
@@ -189,13 +251,13 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
         this.jsonPath = jsonPath;
     }
 
-    public boolean isDoInvert() {
+    public boolean isOnlyDNS() {
 
-        return doInvert;
+        return onlyDNS;
     }
 
-    public void setDoInvert(boolean doInvert) {
+    public void setOnlyDNS(boolean onlyDNS) {
 
-        this.doInvert = doInvert;
+        this.onlyDNS = onlyDNS;
     }
 }
