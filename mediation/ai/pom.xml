@@ -15,7 +15,7 @@
     <packaging>pom</packaging>
     <modules>
         <module>aws-bedrock-guardrail</module>
-        <module>regex-guardrail</module>
+        <module>semantic-prompt-guard</module>
         <module>word-count-guardrail</module>
         <module>sentence-count-guardrail</module>
         <module>json-schema-guardrail</module>
@@ -23,6 +23,10 @@
         <module>url-guardrail</module>
         <module>prompt-template</module>
         <module>prompt-decorator</module>
+        <module>pii-masking-regex</module>
+        <module>regex-guardrail</module>
+        <module>semantic-cache</module>
+        <module>content-length-guardrail</module>
     </modules>
 
     <properties>
