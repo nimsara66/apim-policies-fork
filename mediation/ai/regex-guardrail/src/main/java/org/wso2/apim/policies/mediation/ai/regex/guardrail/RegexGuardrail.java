@@ -49,9 +49,11 @@ import java.util.regex.PatternSyntaxException;
 public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(RegexGuardrail.class);
 
+    private String name;
     private String regex;
     private String jsonPath = "";
     private boolean doInvert = false;
+    private boolean buildAssessment = true;
     private Pattern pattern;
 
     /**
@@ -87,10 +89,10 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
             if (!finalResult) {
                 // Set error properties in message context
                 messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        RegexGuardrailConstants.ERROR_CODE);
-                messageContext.setProperty(RegexGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
+                        RegexGuardrailConstants.GUARDRAIL_APIM_EXCEPTION_CODE);
+                messageContext.setProperty(RegexGuardrailConstants.ERROR_TYPE, RegexGuardrailConstants.REGEX_GUARDRAIL);
                 messageContext.setProperty(RegexGuardrailConstants.CUSTOM_HTTP_SC,
-                        RegexGuardrailConstants.ERROR_CODE);
+                        RegexGuardrailConstants.GUARDRAIL_ERROR_CODE);
 
                 // Build assessment details
                 String assessmentObject = buildAssessmentObject();
@@ -106,6 +108,12 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
             }
         } catch (Exception e) {
             logger.error("RegexGuardrail: Exception occurred during mediation.", e);
+
+            messageContext.setProperty(SynapseConstants.ERROR_CODE,
+                    RegexGuardrailConstants.APIM_INTERNAL_EXCEPTION_CODE);
+            messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, "Error occurred during RegexGuardrail mediation");
+            Mediator faultMediator = messageContext.getFaultSequence();
+            faultMediator.mediate(messageContext);
         }
 
         return true;
@@ -137,7 +145,7 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
         String content = JsonPath.read(jsonContent, this.jsonPath).toString();
 
         // Remove quotes at beginning and end
-        String cleanedText = content.replaceAll("^\"|\"$", "").trim();
+        String cleanedText = content.replaceAll(RegexGuardrailConstants.JSON_CLEAN_REGEX, "").trim();
 
         // Check if any extracted value by json path matches the regex pattern
         return pattern.matcher(cleanedText).find();
@@ -164,16 +172,30 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
      */
     private String buildAssessmentObject() {
         if (logger.isDebugEnabled()) {
-            logger.debug("Regex Guardrail assessment creation");
+            logger.debug("RegexGuardrail: Building assessment");
         }
 
         JSONObject assessmentObject = new JSONObject();
 
         assessmentObject.put(RegexGuardrailConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
-        assessmentObject.put(RegexGuardrailConstants.ASSESSMENT_REASON, "Guardrail blocked.");
-        assessmentObject.put(RegexGuardrailConstants.ASSESSMENTS,
-                "Violation of regular expression: " + regex + " detected.");
+        assessmentObject.put(RegexGuardrailConstants.INTERVENING_GUARDRAIL, this.getName());
+        assessmentObject.put(RegexGuardrailConstants.ASSESSMENT_REASON, "Violation of regular expression detected.");
+
+        if (this.buildAssessment) {
+            assessmentObject.put(RegexGuardrailConstants.ASSESSMENTS,
+                    "Violated regular expression: " + regex);
+        }
         return assessmentObject.toString();
+    }
+
+    public String getName() {
+
+        return name;
+    }
+
+    public void setName(String name) {
+
+        this.name = name;
     }
 
     public String getRegex() {
@@ -213,5 +235,15 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
     public void setDoInvert(boolean doInvert) {
 
         this.doInvert = doInvert;
+    }
+
+    public boolean isBuildAssessment() {
+
+        return buildAssessment;
+    }
+
+    public void setBuildAssessment(boolean buildAssessment) {
+
+        this.buildAssessment = buildAssessment;
     }
 }
