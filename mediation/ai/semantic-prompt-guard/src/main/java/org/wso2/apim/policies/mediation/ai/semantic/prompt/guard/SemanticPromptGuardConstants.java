@@ -23,16 +23,27 @@ package org.wso2.apim.policies.mediation.ai.semantic.prompt.guard;
 public class SemanticPromptGuardConstants {
 
     public static String INTERVENING_GUARDRAIL = "interveningGuardrail";
-    public static int ERROR_CODE = 446;
+    public static int GUARDRAIL_ERROR_CODE = 446;
+    public static int GUARDRAIL_APIM_EXCEPTION_CODE = 900514;
+    public static int APIM_INTERNAL_EXCEPTION_CODE = 900967;
+    public static String SEMANTIC_PROMPT_GUARD = "SEMANTIC_PROMPT_GUARD";
     public static String ERROR_TYPE = "ERROR_TYPE";
     public static String CUSTOM_HTTP_SC = "CUSTOM_HTTP_SC";
     public static String FAULT_SEQUENCE_KEY = "custom_fault";
     public static String ASSESSMENT_ACTION = "action";
     public static String ASSESSMENT_REASON = "actionReason";
     public static String ASSESSMENTS = "assessments";
+    public static String JSON_CLEAN_REGEX = "^\"|\"$";
+    public static String DENIED_PROMPT_KEY = "DENIED_PROMPT";
 
     public enum PromptType {
         ALLOW,
         DENY
+    }
+
+    public enum RuleProcessingMode {
+        ALLOW_ONLY,
+        DENY_ONLY,
+        HYBRID
     }
 }
