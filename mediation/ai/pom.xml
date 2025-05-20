@@ -27,6 +27,7 @@
         <module>regex-guardrail</module>
         <module>semantic-cache</module>
         <module>content-length-guardrail</module>
+        <module>azure-content-safety-guardrail</module>
     </modules>
 
     <properties>

@@ -35,4 +35,16 @@ public class SemanticCacheConstants {
         ALLOW,
         DENY
     }
+
+    public static final String HTTP_PROTOCOL_TYPE = "HTTP";
+    public static final String ALL = "*";
+    public static final String ANY_RESPONSE_CODE = ".*";
+    public static final int DEFAULT_SIZE = -1;
+    public static final boolean DEFAULT_ADD_AGE_HEADER = false;
+    public static final boolean DEFAULT_ENABLE_CACHE_CONTROL = false;
+    public static final String REQUEST_EMBEDDINGS = "requestEmbeddings";
+
+    public static final String NO_STORE_STRING = "no-store";
+    public static final String CACHE_KEY = "cacheKey";
+    public static final String DATE_PATTERN = "EEE, dd MMM yyyy HH:mm:ss z";
 }
