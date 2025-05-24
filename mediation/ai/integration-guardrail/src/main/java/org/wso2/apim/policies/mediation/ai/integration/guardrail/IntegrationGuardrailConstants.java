@@ -30,6 +30,7 @@ public class IntegrationGuardrailConstants {
     public static String VERDICT = "verdict";
     public static String CONTENT_TYPE_HEADER = "Content-Type";
     public static String ASSESSMENT_ACTION = "action";
+    public static String INTERVENING_GUARDRAIL = "interveningGuardrail";
     public static String ASSESSMENT_REASON = "actionReason";
     public static String ASSESSMENTS = "assessments";
 }

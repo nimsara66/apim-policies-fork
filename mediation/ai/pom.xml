@@ -28,6 +28,7 @@
         <module>semantic-cache</module>
         <module>content-length-guardrail</module>
         <module>azure-content-safety-guardrail</module>
+        <module>rag-injector</module>
     </modules>
 
     <properties>

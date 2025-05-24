@@ -21,8 +21,12 @@
 package org.wso2.apim.policies.mediation.ai.semantic.cache;
 
 import com.jayway.jsonpath.JsonPath;
+import io.milvus.client.MilvusServiceClient;
+import io.milvus.param.ConnectParam;
+import io.milvus.param.MetricType;
+import io.milvus.v2.client.ConnectConfig;
+import io.milvus.v2.client.MilvusClientV2;
 import org.apache.axiom.om.OMElement;
-import org.apache.axiom.soap.SOAPEnvelope;
 import org.apache.axis2.AxisFault;
 import org.apache.axis2.Constants;
 import org.apache.commons.collections.map.MultiValueMap;
@@ -36,7 +40,6 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.synapse.ManagedLifecycle;
 import org.apache.synapse.MessageContext;
-import org.apache.synapse.SynapseException;
 import org.apache.synapse.SynapseLog;
 import org.apache.synapse.commons.json.JsonUtil;
 import org.apache.synapse.core.SynapseEnvironment;
@@ -45,16 +48,10 @@ import org.apache.synapse.core.axis2.Axis2Sender;
 import org.apache.synapse.mediators.AbstractMediator;
 import org.apache.synapse.transport.nhttp.NhttpConstants;
 import org.apache.synapse.transport.passthru.PassThroughConstants;
-import org.apache.synapse.util.FixedByteArrayOutputStream;
-import org.apache.synapse.util.MessageHelper;
 import redis.clients.jedis.UnifiedJedis;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -62,7 +59,6 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
-import javax.xml.stream.XMLStreamException;
 
 /**
  * Regex Guardrail mediator.
@@ -78,12 +74,30 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
     private static final Log logger = LogFactory.getLog(SemanticCache.class);
 
     private String name;
-    private String vectorIndex = UUID.randomUUID().toString();
+    private String vectorIndex;
     private double threshold = 0.8;
     private int timeout = 3600;
     private int ttl = 3600;
     private int embeddingDimensions = 1024;
     private String jsonPath = "";
+    private String embeddingProviderType = "mistral";
+    private String vectorDBProviderType = "milvus";
+
+    // Embedding provider security
+    private String openaiApiKey;
+    private String openaiEmbeddingEndpoint;
+    private String openaiEmbeddingModel;
+    private String mistralApiKey;
+    private String mistralEmbeddingEndpoint;
+    private String mistralEmbeddingModel;
+    private String azureOpenaiApiKey;
+    private String azureOpenaiEmbeddingEndpoint;
+
+    // Vector DB configuration
+    private String redisUnifiedURL = "redis://localhost:6379";
+    private String milvusHost = "localhost";
+    private int milvusPort = 19530;
+
     private String protocolType = SemanticCacheConstants.HTTP_PROTOCOL_TYPE;
     private String responseCodes = SemanticCacheConstants.ANY_RESPONSE_CODE;
     private String[] hTTPMethodsToCache = {SemanticCacheConstants.ALL};
@@ -107,27 +121,17 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
             logger.debug("SemanticCache: Initialized.");
         }
 
+        /*
         UnifiedJedis jedis = new UnifiedJedis("redis://localhost:6379");
         this.vectorDBProvider = new RedisVectorDBProvider(jedis, this.ttl,
                 this.embeddingDimensions, "L2", this.threshold);
         this.vectorDBProvider.createIndex(this.vectorIndex);
+        */
 
-        RequestConfig requestConfig = RequestConfig.custom()
-                .setConnectTimeout(this.timeout)
-                .setConnectionRequestTimeout(this.timeout)
-                .setSocketTimeout(this.timeout)
-                .build();
-
-        CloseableHttpClient httpClient = HttpClients.custom()
-                .setDefaultRequestConfig(requestConfig)
-                .build();
-
-        this.embeddingProvider = new MistralEmbeddingProvider(
-                httpClient,
-                "x2c1cKUy3PQxHZMUN2Gjvgpi1fjOVejg",
-                "https://api.mistral.ai/v1/embeddings",
-                "mistral-embed"
-        );
+        this.embeddingProvider = createEmbeddingProvider();
+        this.vectorDBProvider = createVectorDBProvider();
+        this.vectorIndex = "_indexfe41ecc03dd44eda866da69ed314fe11";
+        this.vectorDBProvider.createIndex(this.vectorIndex);
     }
 
     /**
@@ -177,7 +181,7 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
         String contentToEmbed = extractContent(msgCtx);
         if (contentToEmbed == null) {
             // Proceed without caching
-            logger.error("SemanticCache: No content found in the message context.");
+            logger.error("SemanticCache: No json content found in the message context.");
             return true;
         }
 
@@ -185,8 +189,7 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
         // Check if cache hit
         CachableResponse cachedResponse = this.vectorDBProvider.retrieve(embeddings);
 
-        if (cachedResponse != null
-                && (cachedResponse.getResponsePayload() != null || cachedResponse.getResponseEnvelope() != null)) {
+        if (cachedResponse != null && cachedResponse.getResponsePayload() != null) {
             // get the response from the cache and attach to the context and change the
             // direction of the message
             if (synLog.isTraceOrDebugEnabled()) {
@@ -221,21 +224,9 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
 
             try {
                 String extracted = JsonPath.read(jsonContent, this.jsonPath).toString();
-                return extracted.replaceAll("^\"|\"$", "").trim();
+                return extracted.replaceAll(SemanticCacheConstants.TEXT_CLEAN_REGEX, "").trim();
             } catch (Exception e) {
                 logger.warn("SemanticCache: Failed to extract content using jsonPath: " + this.jsonPath, e);
-            }
-        } else {
-            // Case 2: SOAP/XML Envelope
-            try {
-                SOAPEnvelope envelope = msgCtx.getEnvelope();
-                if (envelope != null) {
-                    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-                    envelope.serialize(byteArrayOutputStream);
-                    return byteArrayOutputStream.toString(StandardCharsets.UTF_8).trim();
-                }
-            } catch (Exception e) {
-                logger.error("SemanticCache: Failed to extract SOAP envelope", e);
             }
         }
 
@@ -256,11 +247,9 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
                 }
                 msgCtx.getEnvelope().getBody().addChild(response);
 
-            } else {
-                msgCtx.setEnvelope(MessageHelper.cloneSOAPEnvelope(cachedResponse.getResponseEnvelope()));
             }
         } catch (AxisFault e) {
-            handleException("Error creating response OM from cache : " + this.name, synCtx);
+            handleException("SemanticCache: Error creating response OM from cache - " + this.name, synCtx);
         }
         if (SemanticCacheConstants.HTTP_PROTOCOL_TYPE.equals(getProtocolType())) {
             if (cachedResponse.getStatusCode() != null) {
@@ -290,7 +279,7 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
         }
 
         if (synLog.isTraceOrDebugEnabled()) {
-            synLog.traceOrDebug("Request message " + synCtx.getMessageID() +
+            synLog.traceOrDebug("SemanticCache: Request message " + synCtx.getMessageID() +
                     " was served from the cache");
         }
         // send the response back if there is not onCacheHit is specified
@@ -320,7 +309,6 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
             response.setHttpMethod(httpMethod);
             response.setProtocolType(protocolType);
             response.setResponseCodePattern(responseCodes);
-            response.setHTTPMethodsToCache(hTTPMethodsToCache); // TODO: Ask arshardh if we need this
             response.setMaxMessageSize(maxMessageSize);
             response.setCacheControlEnabled(cacheControlEnabled);
             response.setAddAgeHeaderEnabled(addAgeHeaderEnabled);
@@ -358,16 +346,6 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
                         toCache = false;
                     }
                 }
-
-                if (toCache) {
-                    toCache = false;
-                    for (String method : response.getHTTPMethodsToCache()) {
-                        if (method.equals("*") || method.equals(httpMethod)) {
-                            toCache = true;
-                            break;
-                        }
-                    }
-                }
             }
             if (toCache) {
                 if (JsonUtil.hasAJsonPayload(msgCtx)) {
@@ -375,46 +353,19 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
                     if (response.getMaxMessageSize() > -1 &&
                             responsePayload.length > response.getMaxMessageSize()) {
                         synLog.traceOrDebug(
-                                "Message size exceeds the upper bound for caching, request will not be cached");
+                                "SemanticCache: Message size exceeds the upper bound for caching, "
+                                + "request will not be cached");
                         return;
                     }
                     response.setResponsePayload(responsePayload);
-                    response.setResponseEnvelope(null);
                     response.setJson(true);
-                } else {
-                    // TODO: This implementation is incomplete
-                    SOAPEnvelope clonedEnvelope = MessageHelper.cloneSOAPEnvelope(messageContext.getEnvelope());
-                    if (response.getMaxMessageSize() > -1) {
-                        FixedByteArrayOutputStream fbaos = new FixedByteArrayOutputStream(
-                                response.getMaxMessageSize());
-                        try {
-                            clonedEnvelope.serialize(fbaos);
-                        } catch (XMLStreamException e) {
-                            handleException("Error in checking the message size", e, messageContext);
-                        } catch (SynapseException syne) {
-                            synLog.traceOrDebug(
-                                    "Message size exceeds the upper bound for caching, request will not be cached");
-                            return;
-                        } finally {
-                            try {
-                                fbaos.close();
-                            } catch (IOException e) {
-                                handleException("Error occurred while closing the FixedByteArrayOutputStream ", e,
-                                        messageContext);
-                            }
-                        }
-                    }
-
-                    response.setResponsePayload(null);
-                    response.setResponseEnvelope(clonedEnvelope);
-                    response.setJson(false);
-
                 }
 
                 if (synLog.isTraceOrDebugEnabled()) {
                     synLog.traceOrDebug(
-                            "Storing the response for the message with ID : " + messageContext.getMessageID()
-                                    + " " + "with request hash ID : " + response.getRequestHash() + " in the cache");
+                            "SemanticCache: Storing the response for the message with ID : "
+                                    + messageContext.getMessageID() + " " + "with request hash ID : "
+                                    + response.getRequestHash() + " in the cache");
                 }
 
                 Map<String, String> headers =
@@ -443,13 +394,13 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
                 try {
                     this.vectorDBProvider.store(embeddings, response);
                 } catch (IOException e) {
-                    logger.error("Failed to store embeddings and response in vectorDBProvider", e);
+                    logger.error("SemanticCache: Failed to store embeddings and response in vectorDBProvider", e);
                 }
             } else {
                 response.clean();
             }
         } else {
-            synLog.auditWarn("A response message without a valid mapping to the " +
+            synLog.auditWarn("SemanticCache: A response message without a valid mapping to the " +
                     "request hash found. Unable to store the response in cache");
         }
     }
@@ -484,6 +435,93 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
 
         return StringUtils.isNotEmpty(cacheControlHeaderValue)
                 && cacheControlHeaderValue.contains(SemanticCacheConstants.NO_STORE_STRING);
+    }
+
+    private EmbeddingProvider createEmbeddingProvider() {
+        RequestConfig requestConfig = RequestConfig.custom()
+                .setConnectTimeout(this.timeout)
+                .setConnectionRequestTimeout(this.timeout)
+                .setSocketTimeout(this.timeout)
+                .build();
+
+        CloseableHttpClient httpClient = HttpClients.custom()
+                .setDefaultRequestConfig(requestConfig)
+                .build();
+
+        EmbeddingProviderType type = EmbeddingProviderType.fromString(this.embeddingProviderType);
+
+        switch (type) {
+            case MISTRAL:
+                /*
+                return new MistralEmbeddingProvider(
+                        httpClient,
+                        this.mistralApiKey,
+                        this.mistralEmbeddingEndpoint,
+                        this.mistralEmbeddingModel
+                );
+                */
+
+                return new MistralEmbeddingProvider(
+                        HttpClients.createDefault(),
+                        "x2c1cKUy3PQxHZMUN2Gjvgpi1fjOVejg",
+                        "https://api.mistral.ai/v1/embeddings",
+                        "mistral-embed"
+                );
+
+            case OPENAI:
+                return new OpenAIEmbeddingProvider(
+                        httpClient,
+                        this.openaiApiKey,
+                        this.openaiEmbeddingEndpoint,
+                        this.openaiEmbeddingModel
+                );
+
+            case AZURE_OPENAI:
+                return new AzureOpenAIEmbeddingProvider(
+                        httpClient,
+                        this.azureOpenaiApiKey,
+                        this.azureOpenaiEmbeddingEndpoint
+                );
+
+            default:
+                throw new IllegalArgumentException("Unsupported provider: " + this.embeddingProviderType);
+        }
+    }
+
+    private VectorDBProvider createVectorDBProvider() {
+        VectorDBProviderType type = VectorDBProviderType.fromString(this.vectorDBProviderType);
+
+        switch (type) {
+            case REDIS_STACK:
+                UnifiedJedis jedis = new UnifiedJedis(this.redisUnifiedURL);
+                // TODO: Add support for username password security
+                // TODO: Add supoort for truststore.jks security
+                // TODO: Single index vs shared index with additional filter
+                return new RedisVectorDBProvider(jedis, this.ttl, this.embeddingDimensions,
+                        "L2", this.threshold);
+
+            case MILVUS:
+                /*
+                MilvusServiceClient milvusClient = new MilvusServiceClient(
+                        ConnectParam.newBuilder()
+                                .withHost(this.milvusHost)
+                                .withPort(this.milvusPort)
+                                .build());
+                 */
+                ConnectConfig connectConfig = ConnectConfig.builder()
+                        .uri("http://localhost:19530")
+                        .build();
+                MilvusClientV2 milvusClient = new MilvusClientV2(connectConfig);
+
+                return new MilvusVectorDBProvider(
+                        milvusClient,
+                        this.embeddingDimensions,
+                        MetricType.L2.toString(),
+                        this.threshold
+                );
+            default:
+                throw new IllegalArgumentException("Unsupported vector db: " + this.embeddingProviderType);
+        }
     }
 
     public String getName() {

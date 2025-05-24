@@ -12,12 +12,6 @@ public class CachableResponse implements Serializable {
     private byte[] responsePayload = null;
 
     /**
-     * The response is stored as a SOAPEnvelope (This cannot be used if supporting a cluster because SOAPEnvelope is not
-     * serializable)
-     */
-    private String responseEnvelopeXml = null;
-
-    /**
      * This holds the hash value of the request payload which is calculated form the specified DigestGenerator, and is
      * used to index the cached response
      */
@@ -65,11 +59,6 @@ public class CachableResponse implements Serializable {
     private String httpMethod = null;
 
     /**
-     * The http method type that needs to be cached.
-     */
-    private String[] hTTPMethodsToCache = {SemanticCacheConstants.ALL};
-
-    /**
      * The compiled pattern for the regex of the responseCodes.
      */
     private String responseCodePattern;
@@ -113,22 +102,6 @@ public class CachableResponse implements Serializable {
      */
     public void setResponsePayload(byte[] responsePayload) {
         this.responsePayload = responsePayload;
-    }
-
-    /**
-     * @return The response {@link SOAPEnvelope} for XML response, built from stored XML
-     */
-    public SOAPEnvelope getResponseEnvelope() {
-        // TODO: Build SOAPEnvelope from stored XML
-        return null;
-    }
-
-    /**
-     * @param responseEnvelope {@link SOAPEnvelope} for XML response
-     */
-    public void setResponseEnvelope(SOAPEnvelope responseEnvelope) {
-
-        // TODO: Extract xml payload from SOAPEnvelope
     }
 
     /**
@@ -231,24 +204,6 @@ public class CachableResponse implements Serializable {
      */
     public void setStatusReason(String statusReason) {
         this.statusReason = statusReason;
-    }
-
-    /**
-     * This method gives the HTTP method that needs to be cached.
-     *
-     * @return the HTTP method to be cached
-     */
-    public String[] getHTTPMethodsToCache() {
-        return hTTPMethodsToCache;
-    }
-
-    /**
-     * This sets the HTTP method that needs to be cached.
-     *
-     * @param hTTPMethodToCache the HTTP method to be cached
-     */
-    public void setHTTPMethodsToCache(String... hTTPMethodToCache) {
-        this.hTTPMethodsToCache = hTTPMethodToCache;
     }
 
     /**

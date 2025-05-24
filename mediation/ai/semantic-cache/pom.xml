@@ -92,18 +92,11 @@
             <version>6.0.0</version>
         </dependency>
 
-        <!-- https://mvnrepository.com/artifact/org.ejml/ejml-simple -->
+        <!-- https://mvnrepository.com/artifact/io.milvus/milvus-sdk-java -->
         <dependency>
-            <groupId>org.ejml</groupId>
-            <artifactId>ejml-simple</artifactId>
-            <version>0.44.0</version>
-        </dependency>
-
-        <!-- https://mvnrepository.com/artifact/org.ejml/ejml-core -->
-        <dependency>
-            <groupId>org.ejml</groupId>
-            <artifactId>ejml-core</artifactId>
-            <version>0.44.0</version>
+            <groupId>io.milvus</groupId>
+            <artifactId>milvus-sdk-java</artifactId>
+            <version>2.5.9</version>
         </dependency>
     </dependencies>
 
@@ -123,6 +116,7 @@
             <plugin>
                 <groupId>org.apache.felix</groupId>
                 <artifactId>maven-bundle-plugin</artifactId>
+                <version>3.3.0</version>
                 <extensions>true</extensions>
                 <configuration>
                     <instructions>
@@ -130,8 +124,11 @@
                         <Bundle-Name>${project.artifactId}</Bundle-Name>
                         <Private-Package>
                             redis.clients.jedis.*,
-                            org.ejml.*,
-                            pabeles.concurrency.*,
+                            io.milvus.*,
+                            milvus.proto.*,
+                            io.grpc.*,
+                            io.perfmark.*,
+                            com.google.errorprone.*,
                         </Private-Package>
                         <Export-Package>
                             org.wso2.apim.policies.mediation.ai.semantic.cache.*;version="${project.version}",
@@ -139,7 +136,6 @@
                         <Import-Package>
                             !redis.clients.jedis.*,
                             !javax.xml.soap,
-                            javax.xml.stream.*; version="${javax.xml.stream.imp.pkg.version}",
                             org.apache.axiom.*; version="${axiom.osgi.version.range}",
                             org.apache.axis2; version="${axis2.osgi.version.range}",
                             org.apache.axis2.description; version="${axis2.osgi.version.range}",
@@ -152,20 +148,16 @@
                             org.apache.synapse.config.xml,
                             org.apache.synapse.core,
                             org.apache.synapse.core.axis2,
-                            org.apache.synapse.endpoints.*,
                             org.apache.synapse.mediators.base,
                             org.apache.axis2.transport.base,
                             javax.xml.soap; version="${javax.xml.soap.imp.pkg.version}",
-                            edu.emory.mathcs.backport.*,
                             org.apache.axis2.*; version="${imp.pkg.version.axis2}",
-                            javax.activation.*; version="[0.0.0, 1.0.0)",
                             javax.cache,
                             javax.net.ssl,
                             javax.xml.namespace,
                             org.apache.http.*,
                             org.apache.commons.lang3;version="${apache.commons.lang3.version}",
                             org.apache.commons.*,
-                            org.apache.commons.lang3.*,
                             org.apache.synapse.*,
                             javax.annotation;version=0.0.0;resolution:=optional,
                             com.jayway.jsonpath;version="[2.9,3)",
