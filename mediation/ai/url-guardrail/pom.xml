@@ -9,7 +9,7 @@
     </parent>
 
     <artifactId>org.wso2.apim.policies.mediation.ai.url-guardrail</artifactId>
-    <packaging>jar</packaging>
+    <packaging>bundle</packaging>
     <name>WSO2 APIM Mediation Policies - URL Guardrail</name>
 
     <properties>
@@ -100,6 +100,7 @@
             <plugin>
                 <groupId>org.apache.felix</groupId>
                 <artifactId>maven-bundle-plugin</artifactId>
+                <version>3.3.0</version>
                 <extensions>true</extensions>
                 <configuration>
                     <instructions>
@@ -139,7 +140,7 @@
                             org.apache.commons.lang3.*,
                             org.apache.synapse.*,
                             javax.annotation;version=0.0.0;resolution:=optional,
-                            com.jayway.jsonpath;version="[2.9,3)"
+                            com.jayway.jsonpath;version="[2.9,3)",
                             *;resolution:=optional
                         </Import-Package>
                         <DynamicImport-Package>*</DynamicImport-Package>

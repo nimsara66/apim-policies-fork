@@ -23,7 +23,6 @@ package org.wso2.apim.policies.mediation.ai.url.guardrail;
 import com.jayway.jsonpath.JsonPath;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.http.HttpStatus;
 import org.apache.synapse.ManagedLifecycle;
 import org.apache.synapse.Mediator;
 import org.apache.synapse.MessageContext;
@@ -40,7 +39,6 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -73,7 +71,7 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
 
     private String name;
     private String jsonPath = "";
-    private int timeout = 6000;
+    private int timeout = 5000;
     private boolean onlyDNS = false;
     private boolean buildAssessment = true;
 
@@ -85,7 +83,7 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
     @Override
     public void init(SynapseEnvironment synapseEnvironment) {
         if (logger.isDebugEnabled()) {
-            logger.debug("URLGuardrail: Initialized.");
+            logger.debug("Initializing Guardrail");
         }
     }
 
@@ -106,7 +104,7 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("URLGuardrail: Starting mediation.");
+            logger.debug("Starting mediation.");
         }
 
         try {
@@ -123,23 +121,20 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
                 // Build assessment details
                 String assessmentObject = buildAssessmentObject(invalidUrls);
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
-
-                if (logger.isDebugEnabled()) {
-                    logger.debug("URLGuardrail: Validation failed - triggering fault sequence.");
-                }
+                logger.info("Validation failed - triggering fault sequence.");
 
                 Mediator faultMediator = messageContext.getSequence(URLGuardrailConstants.FAULT_SEQUENCE_KEY);
                 faultMediator.mediate(messageContext);
                 return false; // Stop further processing
             }
         } catch (Exception e) {
-            logger.error("URLGuardrail: Error during mediation", e);
+            logger.error("Error during mediation", e);
 
             messageContext.setProperty(SynapseConstants.ERROR_CODE, URLGuardrailConstants.APIM_INTERNAL_EXCEPTION_CODE);
             messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, "Error occurred during URLGuardrail mediation");
             Mediator faultMediator = messageContext.getFaultSequence();
             faultMediator.mediate(messageContext);
-            return false;
+            return false; // Stop further processing
         }
 
         return true;
@@ -153,7 +148,7 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
      */
     private List<String> validatePayload(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("URLGuardrail: Validating payload.");
+            logger.debug("Validating payload.");
         }
 
         String jsonContent = extractJsonContent(messageContext);
@@ -177,7 +172,7 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
      */
     private List<String> validateJsonAgainstURL(String input) {
         if (logger.isDebugEnabled()) {
-            logger.debug("URLGuardrail: Validating extracted URLs.");
+            logger.debug("Validating extracted URLs.");
         }
 
         Set<String> urls = extractUrls(input);
@@ -202,7 +197,7 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
      * Extracts all URLs from the input string using a simple regex.
      *
      * @param input input string containing potential URLs
-     * @return list of extracted URLs
+     * @return set of extracted URLs
      */
     private Set<String> extractUrls(String input) {
         Pattern urlPattern = Pattern.compile(URLGuardrailConstants.URL_REGEX);
@@ -297,7 +292,7 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
      */
     private String buildAssessmentObject(List<String> invalidUrls) {
         if (logger.isDebugEnabled()) {
-            logger.debug("URLGuardrail: Building assessment");
+            logger.debug("Building assessment");
         }
 
         JSONObject assessmentObject = new JSONObject();

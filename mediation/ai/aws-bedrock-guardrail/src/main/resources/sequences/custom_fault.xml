@@ -23,7 +23,7 @@
         <property name="ERROR_TYPE" expression="get-property('ERROR_TYPE')"/>
         <property name="ERROR_MESSAGE" expression="get-property('ERROR_MESSAGE')"/>
     </log>
-    <filter source="get-property('MESSAGE_FORMAT')" regex="soap1[1-2]">
+    <filter source="get-property('MESSAGE_FORMAT')" piiEntities="soap1[1-2]">
         <then>
             <property name="SOAP_FAULT_CODE" value="Server"/>
             <makefault version="soap11">
@@ -40,7 +40,7 @@
                     <arg expression="$ctx:ERROR_MESSAGE"/>
                 </args>
             </payloadFactory>
-            <filter source="$axis2:HTTP_METHOD" regex="^(?!.*(POST|PUT|PATCH)).*$">
+            <filter source="$axis2:HTTP_METHOD" piiEntities="^(?!.*(POST|PUT|PATCH)).*$">
                 <property name="messageType" value="application/json" scope="axis2"/>
             </filter>
         </else>

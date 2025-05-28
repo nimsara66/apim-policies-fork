@@ -21,12 +21,10 @@
 package org.wso2.apim.policies.mediation.ai.integration.guardrail;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.google.gson.reflect.TypeToken;
+import com.jayway.jsonpath.JsonPath;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.HttpPost;
@@ -44,12 +42,14 @@ import org.apache.synapse.core.axis2.Axis2MessageContext;
 import org.apache.synapse.mediators.AbstractMediator;
 import org.json.JSONObject;
 
+import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Integration Guardrail mediator.
@@ -64,12 +64,11 @@ import java.util.Map;
 public class IntegrationGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(IntegrationGuardrail.class);
 
+    private String name;
     private String webhookUrl;
     private String headers;
     private String jsonPath = "";
     private int timeout = 60000;
-    private URL url;
-    private String assessment;
 
     /**
      * Initializes the IntegrationGuardrail mediator.
@@ -103,108 +102,85 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Executing JSONSchemaGuardrail mediation");
+            logger.debug("Executing IntegrationGuardrail mediation.");
         }
 
         try {
-            if (!validatePayload(messageContext)) {
-                // Set error properties in message context
-                messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        IntegrationGuardrailConstants.ERROR_CODE);
-                messageContext.setProperty(IntegrationGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
-                messageContext.setProperty(IntegrationGuardrailConstants.CUSTOM_HTTP_SC,
-                        IntegrationGuardrailConstants.ERROR_CODE);
-
-                messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, this.assessment);
-
+            Optional<String> validationResult = validatePayload(messageContext);
+            if (validationResult.isPresent()) {
+                setErrorProperties(messageContext, validationResult.get());
                 if (logger.isDebugEnabled()) {
-                    logger.debug("Initiating Integration Guardrail fault sequence");
+                    logger.debug("Triggering IntegrationGuardrail fault sequence.");
                 }
-
                 Mediator faultMediator = messageContext.getSequence(IntegrationGuardrailConstants.FAULT_SEQUENCE_KEY);
                 faultMediator.mediate(messageContext);
-                return false; // Stop further processing
+                return false;
             }
         } catch (Exception e) {
-            logger.error("Error during JSONSchemaGuardrail mediation", e);
+            logger.error("Error during IntegrationGuardrail mediation", e);
         }
 
         return true;
     }
 
-    /**
-     * Validates the payload by posting it to the configured webhook and interpreting the response.
-     *
-     * @param messageContext The message context containing the payload.
-     * @return {@code true} if the payload passes validation; {@code false} if a violation is detected.
-     */
-    private boolean validatePayload(MessageContext messageContext) {
+    private Optional<String> validatePayload(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Validating JSONSchemaGuardrail payload");
+            logger.debug("Validating payload via IntegrationGuardrail.");
         }
 
-        Map<String, Object> guardrailMetadata = new HashMap<>();
+        Map<String, Object> metadata = new HashMap<>();
+        String jsonPayload = extractJsonContent(messageContext);
+
+        // If no JSON path is specified, apply regex to the entire JSON content
+        if (this.jsonPath != null && !this.jsonPath.trim().isEmpty()) {
+            jsonPayload = JsonPath.read(jsonPayload, this.jsonPath).toString();
+        }
+
+        // Remove quotes at beginning and end
+        jsonPayload = jsonPayload.replaceAll("^\"|\"$", "").trim();
 
         if (!messageContext.isResponse()) {
-            // Request flow
-            guardrailMetadata.put(IntegrationGuardrailConstants.REQUEST_PAYLOAD_KEY,
-                    extractJsonContent(messageContext));
+            metadata.put(IntegrationGuardrailConstants.REQUEST_PAYLOAD_KEY, jsonPayload);
         } else {
-            // Response flow
-            guardrailMetadata.put(IntegrationGuardrailConstants.RESPONSE_PAYLOAD_KEY,
-                    extractJsonContent(messageContext));
+            metadata.put(IntegrationGuardrailConstants.RESPONSE_PAYLOAD_KEY, jsonPayload);
         }
 
-        if (this.url != null) {
-            try {
-                String response = sendPostRequestToWebhook(guardrailMetadata);
-                JsonObject jsonResponse = JsonParser.parseString(response).getAsJsonObject();
+        try {
+            String webhookResponse = sendPostRequestToWebhook(metadata);
+            JSONObject responseJson = new JSONObject(webhookResponse);
+            String action = determineAssessmentAction(responseJson);
 
-                // Build assessment details
-                buildAssessmentObject(jsonResponse);
-                return jsonResponse.has(IntegrationGuardrailConstants.VERDICT)
-                        && jsonResponse.get(IntegrationGuardrailConstants.VERDICT).getAsBoolean();
-            } catch (Exception e) {
-                log.error("Error sending webhook POST request.", e);
-                // If a verdict cannot be extracted, assume the request/ response is valid
-                return true;
+            if ("GUARDRAIL_INTERVENED".equals(action)) {
+                return Optional.of(buildAssessment(responseJson));
             }
+
+        } catch (Exception e) {
+            logger.error("Error sending POST request to webhook.", e);
         }
 
-        return true;
+        return Optional.empty(); // Treat as valid on exception
     }
 
-    /**
-     * Sends a POST request to the configured webhook URL with the provided metadata.
-     * <p>
-     * Custom headers can also be included if specified.
-     *
-     * @param metadata A map containing payload metadata to be sent.
-     * @return The webhook's response body as a string.
-     * @throws Exception If an error occurs while sending the request or receiving the response.
-     */
-    private String sendPostRequestToWebhook(Map<String, Object> metadata) throws Exception {
+    private void setErrorProperties(MessageContext messageContext, String assessmentJson) {
+        messageContext.setProperty(SynapseConstants.ERROR_CODE, IntegrationGuardrailConstants.ERROR_CODE);
+        messageContext.setProperty(IntegrationGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
+        messageContext.setProperty(IntegrationGuardrailConstants.CUSTOM_HTTP_SC, IntegrationGuardrailConstants.ERROR_CODE);
+        messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentJson);
+    }
 
-        // Create request config with specified timeouts
+    private String sendPostRequestToWebhook(Map<String, Object> metadata) throws IOException {
         RequestConfig requestConfig = RequestConfig.custom()
-                .setConnectTimeout(this.timeout)
-                .setSocketTimeout(this.timeout)
-                .setConnectionRequestTimeout(this.timeout)
+                .setConnectTimeout(timeout)
+                .setSocketTimeout(timeout)
+                .setConnectionRequestTimeout(timeout)
                 .build();
 
         try (CloseableHttpClient httpClient = HttpClients.custom().setDefaultRequestConfig(requestConfig).build()) {
             HttpPost httpPost = new HttpPost(webhookUrl);
-
-            // Set default Content-Type header
             httpPost.setHeader(IntegrationGuardrailConstants.CONTENT_TYPE_HEADER, "application/json");
 
-            // Apply custom headers if provided
-            if (this.headers != null && !this.headers.isEmpty()) {
-                Map<String, String> customHeaders = new Gson().fromJson(
-                        this.headers,
-                        new TypeToken<Map<String, String>>() {
-                        }.getType());
-
+            if (headers != null && !headers.isEmpty()) {
+                Map<String, String> customHeaders = new Gson().fromJson(headers, new TypeToken<Map<String, String>>() {}.getType());
                 for (Map.Entry<String, String> header : customHeaders.entrySet()) {
                     if (header.getKey() != null && header.getValue() != null) {
                         httpPost.setHeader(header.getKey(), header.getValue());
@@ -212,37 +188,52 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
                 }
             }
 
-            // Set request body
-            String payload = new Gson().toJson(metadata);
-            StringEntity entity = new StringEntity(payload, StandardCharsets.UTF_8);
+            StringEntity entity = new StringEntity(new Gson().toJson(metadata), StandardCharsets.UTF_8);
             httpPost.setEntity(entity);
 
             if (logger.isDebugEnabled()) {
-                logger.debug("Sending request to webhook");
+                logger.debug("Sending webhook request.");
             }
 
-            // Execute the request
             HttpResponse response = httpClient.execute(httpPost);
-
-            // Process response
-            HttpEntity responseEntity = response.getEntity();
-            String responseBody = EntityUtils.toString(responseEntity);
-
-            // Check response status
             int statusCode = response.getStatusLine().getStatusCode();
-            if (statusCode == HttpURLConnection.HTTP_OK) {
-                if (logger.isDebugEnabled()) {
-                    logger.debug("Received successful response from webhook");
-                }
-                return responseBody;
-            }
+            String responseBody = EntityUtils.toString(response.getEntity());
 
-            if (logger.isDebugEnabled()) {
-                logger.debug("Webhook request failed with status code: " + statusCode);
-                logger.debug("Response: " + responseBody);
+            if (statusCode == HttpURLConnection.HTTP_OK) {
+                return responseBody;
+            } else {
+                logger.debug("Webhook returned status " + statusCode + ": " + responseBody);
+                return "";
             }
-            return "";
         }
+    }
+
+    private String determineAssessmentAction(JSONObject responseJson) {
+        if (responseJson.has(IntegrationGuardrailConstants.VERDICT)) {
+            return responseJson.getBoolean(IntegrationGuardrailConstants.VERDICT) ? "None" : "GUARDRAIL_INTERVENED";
+        } else {
+            logger.error("Malformed webhook response: missing 'verdict' field. Response: " + responseJson);
+            return "None";
+        }
+    }
+
+    private String buildAssessment(JSONObject responseJson) {
+        JSONObject assessment = new JSONObject();
+
+        if (responseJson.has(IntegrationGuardrailConstants.VERDICT)
+                && !responseJson.getBoolean(IntegrationGuardrailConstants.VERDICT)) {
+            assessment.put(IntegrationGuardrailConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
+            assessment.put(IntegrationGuardrailConstants.INTERVENING_GUARDRAIL, this.getName());
+            assessment.put(IntegrationGuardrailConstants.ASSESSMENT_REASON, "Guardrail blocked.");
+            assessment.put(IntegrationGuardrailConstants.ASSESSMENTS,
+                    responseJson.has(IntegrationGuardrailConstants.ASSESSMENTS)
+                            ? responseJson.get(IntegrationGuardrailConstants.ASSESSMENTS) :
+                            "Violation of " + this.getName() + " detected.");
+        } else {
+            assessment.put(IntegrationGuardrailConstants.ASSESSMENT_ACTION, "None");
+        }
+
+        return assessment.toString();
     }
 
     /**
@@ -258,33 +249,14 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
         return JsonUtil.jsonPayloadToString(axis2MC);
     }
 
-    /**
-     * Builds an assessment object containing details from the webhook response.
-     * <p>
-     * Populates fields such as action, actionReason, and assessments based on the webhook response,
-     * or defaults if fields are not present.
-     *
-     * @param response The JSON object received from the webhook.
-     */
-    private void buildAssessmentObject(JsonObject response) {
-        if (logger.isDebugEnabled()) {
-            logger.debug("Integration Guardrail assessment creation");
-        }
+    public String getName() {
 
-        JSONObject assessmentObject = new JSONObject();
+        return name;
+    }
 
-        assessmentObject.put(IntegrationGuardrailConstants.ASSESSMENT_ACTION,
-                response.has(IntegrationGuardrailConstants.ASSESSMENT_ACTION)
-                ? response.get(IntegrationGuardrailConstants.ASSESSMENT_ACTION): "GUARDRAIL_INTERVENED");
-        assessmentObject.put(IntegrationGuardrailConstants.ASSESSMENT_REASON,
-                response.has(IntegrationGuardrailConstants.ASSESSMENT_REASON)
-                ? response.get(IntegrationGuardrailConstants.ASSESSMENT_REASON): "Guardrail blocked.");
-        assessmentObject.put(IntegrationGuardrailConstants.ASSESSMENTS,
-                response.has(IntegrationGuardrailConstants.ASSESSMENTS)
-                ? response.get(IntegrationGuardrailConstants.ASSESSMENTS):
-                        "Violation of integration guardrail detected.");
+    public void setName(String name) {
 
-        this.assessment = assessmentObject.toString();
+        this.name = name;
     }
 
     public String getWebhookUrl() {
@@ -297,7 +269,7 @@ public class IntegrationGuardrail extends AbstractMediator implements ManagedLif
         this.webhookUrl = webhookUrl;
 
         try {
-            this.url = new URL(webhookUrl);
+            new URL(webhookUrl);
         } catch (MalformedURLException e) {
             logger.error("Malformed URL provided: " + webhookUrl, e);
         }

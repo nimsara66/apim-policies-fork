@@ -21,21 +21,7 @@
 package org.wso2.apim.policies.mediation.ai.semantic.cache;
 
 public class SemanticCacheConstants {
-
-    public static String INTERVENING_GUARDRAIL = "interveningGuardrail";
-    public static int ERROR_CODE = 446;
-    public static String ERROR_TYPE = "ERROR_TYPE";
-    public static String CUSTOM_HTTP_SC = "CUSTOM_HTTP_SC";
-    public static String FAULT_SEQUENCE_KEY = "custom_fault";
-    public static String ASSESSMENT_ACTION = "action";
-    public static String ASSESSMENT_REASON = "actionReason";
-    public static String ASSESSMENTS = "assessments";
-
-    public enum PromptType {
-        ALLOW,
-        DENY
-    }
-
+    public static String TEXT_CLEAN_REGEX = "^\"|\"$";
     public static final String HTTP_PROTOCOL_TYPE = "HTTP";
     public static final String ALL = "*";
     public static final String ANY_RESPONSE_CODE = ".*";

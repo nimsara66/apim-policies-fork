@@ -1,0 +1,13 @@
+{
+  "resources":{
+    "includes":[
+      {
+        "condition": {
+          "typeReachable": "io.grpc.netty.shaded.io.netty.channel.epoll.Native"
+        },
+        "pattern":".*libnetty_transport_native_epoll_.*\\.so"
+      }
+    ]},
+  "bundles":[]
+}
+

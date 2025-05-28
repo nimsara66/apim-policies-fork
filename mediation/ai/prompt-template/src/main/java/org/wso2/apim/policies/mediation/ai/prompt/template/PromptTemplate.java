@@ -251,7 +251,7 @@ public class PromptTemplate extends AbstractMediator implements ManagedLifecycle
 
             for (Map<String, String> item : templates) {
                 String name = item.get(PromptTemplateConstants.PROMPT_TEMPLATE_NAME);
-                String prompt = item.get(PromptTemplateConstants.PROMPT_TEMPLATE_NAME);
+                String prompt = item.get(PromptTemplateConstants.PROMPT_TEMPLATE_PROMPT);
                 promptTemplates.put(name, prompt);
             }
         } catch (Exception e) {

@@ -54,6 +54,7 @@ import java.util.Map;
 public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(AWSBedrockGuardrail.class);
 
+    private String name;
     private String accessKey;
     private String secretKey;
     // Optional, can be null if not using temporary credentials
@@ -102,7 +103,7 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
 
             if (this.jsonPath != null && !this.jsonPath.trim().isEmpty()) {
                 String content = JsonPath.read(jsonContent, this.jsonPath).toString();
-                jsonContent = content.replaceAll("^\"|\"$", "").trim();
+                jsonContent = content.replaceAll(AWSBedrockConstants.JSON_CLEAN_REGEX, "").trim();
             }
 
             // Create request payload for AWS Bedrock
@@ -121,7 +122,7 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
             }
 
             Map<String, String> authHeaders;
-            if (roleArn != null && roleRegion != null) {
+            if (roleArn != null && !roleArn.isEmpty() && roleRegion != null && !roleRegion.isEmpty()) {
 
                 if (logger.isDebugEnabled()) {
                     logger.debug("AWSBedrockGuardrail: Using role-based authentication with ARN: " + roleArn);
@@ -247,7 +248,7 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
 
             if (this.jsonPath != null && !this.jsonPath.trim().isEmpty()) {
                 String content = JsonPath.read(jsonContent, this.jsonPath).toString();
-                jsonContent = content.replaceAll("^\"|\"$", "").trim();
+                jsonContent = content.replaceAll(AWSBedrockConstants.JSON_CLEAN_REGEX, "").trim();
             }
 
             // Process piiEntities
@@ -302,11 +303,6 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
     private String buildAssessmentObject(JsonNode responseBody) {
         JSONObject assessmentObject = new JSONObject();
 
-        if (responseBody.has(AWSBedrockConstants.ASSESSMENTS)) {
-            assessmentObject.put(AWSBedrockConstants.ASSESSMENTS, new JSONObject(responseBody
-                    .get(AWSBedrockConstants.ASSESSMENTS).get(0).toString()));
-        }
-
         if (responseBody.has(AWSBedrockConstants.ASSESSMENT_ACTION)) {
             assessmentObject.put(AWSBedrockConstants.ASSESSMENT_ACTION,
                     responseBody.get(AWSBedrockConstants.ASSESSMENT_ACTION).asText());
@@ -317,11 +313,25 @@ public class AWSBedrockGuardrail extends AbstractMediator implements ManagedLife
                     responseBody.get(AWSBedrockConstants.ASSESSMENT_REASON).asText());
         }
 
+        assessmentObject.put(AWSBedrockConstants.INTERVENING_GUARDRAIL, this.getName());
+
+        if (responseBody.has(AWSBedrockConstants.ASSESSMENTS)) {
+            assessmentObject.put(AWSBedrockConstants.ASSESSMENTS, new JSONObject(responseBody
+                    .get(AWSBedrockConstants.ASSESSMENTS).get(0).toString()));
+        }
+
         return assessmentObject.toString();
     }
 
-    // TODO: Implement PII redaction logic
-    private void redactPII(MessageContext messageContext, JsonNode response) {}
+    public String getName() {
+
+        return name;
+    }
+
+    public void setName(String name) {
+
+        this.name = name;
+    }
 
     public String getAccessKey() {
 
