@@ -21,11 +21,6 @@
 package org.wso2.apim.policies.mediation.ai.semantic.cache;
 
 import com.jayway.jsonpath.JsonPath;
-import io.milvus.client.MilvusServiceClient;
-import io.milvus.param.ConnectParam;
-import io.milvus.param.MetricType;
-import io.milvus.v2.client.ConnectConfig;
-import io.milvus.v2.client.MilvusClientV2;
 import org.apache.axiom.om.OMElement;
 import org.apache.axis2.AxisFault;
 import org.apache.axis2.Constants;
@@ -35,9 +30,6 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.http.HttpHeaders;
 import org.apache.http.ParseException;
-import org.apache.http.client.config.RequestConfig;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
 import org.apache.synapse.ManagedLifecycle;
 import org.apache.synapse.MessageContext;
 import org.apache.synapse.SynapseLog;
@@ -48,15 +40,16 @@ import org.apache.synapse.core.axis2.Axis2Sender;
 import org.apache.synapse.mediators.AbstractMediator;
 import org.apache.synapse.transport.nhttp.NhttpConstants;
 import org.apache.synapse.transport.passthru.PassThroughConstants;
-import redis.clients.jedis.UnifiedJedis;
+import org.wso2.carbon.apimgt.impl.APIManagerConfiguration;
+import org.wso2.carbon.apimgt.impl.internal.ServiceReferenceHolder;
 
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.TreeMap;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 
@@ -72,31 +65,9 @@ import java.util.regex.Matcher;
  */
 public class SemanticCache extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(SemanticCache.class);
-
-    private String name;
-    private String vectorIndex;
-    private double threshold = 0.8;
-    private int timeout = 3600;
-    private int ttl = 3600;
-    private int embeddingDimensions = 1024;
-    private String jsonPath = "";
-    private String embeddingProviderType = "mistral";
-    private String vectorDBProviderType = "milvus";
-
-    // Embedding provider security
-    private String openaiApiKey;
-    private String openaiEmbeddingEndpoint;
-    private String openaiEmbeddingModel;
-    private String mistralApiKey;
-    private String mistralEmbeddingEndpoint;
-    private String mistralEmbeddingModel;
-    private String azureOpenaiApiKey;
-    private String azureOpenaiEmbeddingEndpoint;
-
-    // Vector DB configuration
-    private String redisUnifiedURL = "redis://localhost:6379";
-    private String milvusHost = "localhost";
-    private int milvusPort = 19530;
+    private static final APIManagerConfiguration apimConfig =
+            ServiceReferenceHolder.getInstance().getAPIManagerConfigurationService()
+                .getAPIManagerConfiguration();
 
     private String protocolType = SemanticCacheConstants.HTTP_PROTOCOL_TYPE;
     private String responseCodes = SemanticCacheConstants.ANY_RESPONSE_CODE;
@@ -106,6 +77,11 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
     private boolean addAgeHeaderEnabled = SemanticCacheConstants.DEFAULT_ADD_AGE_HEADER;
     private static final String CONTENT_TYPE = "Content-Type";
     private static final String SC_NOT_MODIFIED = "304";
+
+    private int threshold = SemanticCacheConstants.DEFAULT_THRESHOLD;
+    private String jsonPath;
+    private String embeddingProviderType;
+    private String vectorDBProviderType;
 
     private VectorDBProvider vectorDBProvider;
     private EmbeddingProvider embeddingProvider;
@@ -118,20 +94,14 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
     @Override
     public void init(SynapseEnvironment synapseEnvironment) {
         if (logger.isDebugEnabled()) {
-            logger.debug("SemanticCache: Initialized.");
+            logger.debug("Initializing Semantic Cache.");
         }
-
-        /*
-        UnifiedJedis jedis = new UnifiedJedis("redis://localhost:6379");
-        this.vectorDBProvider = new RedisVectorDBProvider(jedis, this.ttl,
-                this.embeddingDimensions, "L2", this.threshold);
-        this.vectorDBProvider.createIndex(this.vectorIndex);
-        */
 
         this.embeddingProvider = createEmbeddingProvider();
         this.vectorDBProvider = createVectorDBProvider();
-        this.vectorIndex = "_indexfe41ecc03dd44eda866da69ed314fe11";
-        this.vectorDBProvider.createIndex(this.vectorIndex);
+        this.vectorDBProvider.createIndex(
+                apimConfig.getVectorDBProviders().get(this.vectorDBProviderType)
+        );
     }
 
     /**
@@ -140,13 +110,13 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
     @Override
     public void destroy() {
         // No specific resources to release
-        System.out.println("SemanticCache: Destroyed.");
+
     }
 
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("SemanticCache: Beginning payload validation.");
+            logger.debug("Beginning payload validation.");
         }
 
         SynapseLog synLog = getLog(messageContext);
@@ -166,7 +136,7 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
                 result = processRequestMessage(messageContext, synLog);
             }
         } catch (Exception e) {
-            logger.error("SemanticCache: Exception occurred during mediation.", e);
+            logger.error("Exception occurred during mediation.", e);
         }
 
         return result;
@@ -181,13 +151,16 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
         String contentToEmbed = extractContent(msgCtx);
         if (contentToEmbed == null) {
             // Proceed without caching
-            logger.error("SemanticCache: No json content found in the message context.");
+            logger.error("No json content found in the message context.");
             return true;
         }
 
         float[] embeddings = this.embeddingProvider.getEmbedding(contentToEmbed);
         // Check if cache hit
-        CachableResponse cachedResponse = this.vectorDBProvider.retrieve(embeddings);
+        Map<String, String> filter = new HashMap<>();
+        filter.put("api_id", (String) messageContext.getProperty("API_UUID"));
+        filter.put("threshold", String.valueOf(this.threshold));
+        CachableResponse cachedResponse = this.vectorDBProvider.retrieve(embeddings, filter);
 
         if (cachedResponse != null && cachedResponse.getResponsePayload() != null) {
             // get the response from the cache and attach to the context and change the
@@ -196,7 +169,7 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
                 synLog.traceOrDebug("Cache-hit for message ID : " + messageContext.getMessageID());
             }
             //Validate the response based on max-age and no-cache headers.
-            if (SemanticCacheConstants.HTTP_PROTOCOL_TYPE.equals(getProtocolType())
+            if (SemanticCacheConstants.HTTP_PROTOCOL_TYPE.equals(this.protocolType)
                     && cachedResponse.isCacheControlEnabled()) {
                 return true;
             }
@@ -211,7 +184,7 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
 
     private String extractContent(org.apache.axis2.context.MessageContext msgCtx) {
         if (logger.isDebugEnabled()) {
-            logger.debug("SemanticCache: Extracting content from message context.");
+            logger.debug("Extracting content from message context.");
         }
 
         // Case 1: JSON Payload
@@ -226,7 +199,7 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
                 String extracted = JsonPath.read(jsonContent, this.jsonPath).toString();
                 return extracted.replaceAll(SemanticCacheConstants.TEXT_CLEAN_REGEX, "").trim();
             } catch (Exception e) {
-                logger.warn("SemanticCache: Failed to extract content using jsonPath: " + this.jsonPath, e);
+                logger.warn("Failed to extract content using jsonPath: " + this.jsonPath, e);
             }
         }
 
@@ -249,9 +222,9 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
 
             }
         } catch (AxisFault e) {
-            handleException("SemanticCache: Error creating response OM from cache - " + this.name, synCtx);
+            handleException("Error creating response OM from cache - ", synCtx);
         }
-        if (SemanticCacheConstants.HTTP_PROTOCOL_TYPE.equals(getProtocolType())) {
+        if (SemanticCacheConstants.HTTP_PROTOCOL_TYPE.equals(this.protocolType)) {
             if (cachedResponse.getStatusCode() != null) {
                 msgCtx.setProperty(NhttpConstants.HTTP_SC,
                         Integer.parseInt(cachedResponse.getStatusCode()));
@@ -279,7 +252,7 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
         }
 
         if (synLog.isTraceOrDebugEnabled()) {
-            synLog.traceOrDebug("SemanticCache: Request message " + synCtx.getMessageID() +
+            synLog.traceOrDebug("Request message " + synCtx.getMessageID() +
                     " was served from the cache");
         }
         // send the response back if there is not onCacheHit is specified
@@ -353,7 +326,7 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
                     if (response.getMaxMessageSize() > -1 &&
                             responsePayload.length > response.getMaxMessageSize()) {
                         synLog.traceOrDebug(
-                                "SemanticCache: Message size exceeds the upper bound for caching, "
+                                "Message size exceeds the upper bound for caching, "
                                 + "request will not be cached");
                         return;
                     }
@@ -363,7 +336,7 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
 
                 if (synLog.isTraceOrDebugEnabled()) {
                     synLog.traceOrDebug(
-                            "SemanticCache: Storing the response for the message with ID : "
+                            "Storing the response for the message with ID : "
                                     + messageContext.getMessageID() + " " + "with request hash ID : "
                                     + response.getRequestHash() + " in the cache");
                 }
@@ -392,15 +365,17 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
 
                 // Store cachedResponse in the vectorDB
                 try {
-                    this.vectorDBProvider.store(embeddings, response);
+                    Map<String, String> filter = new HashMap<>();
+                    filter.put("api_id", (String) messageContext.getProperty("API_UUID"));
+                    this.vectorDBProvider.store(embeddings, response, filter);
                 } catch (IOException e) {
-                    logger.error("SemanticCache: Failed to store embeddings and response in vectorDBProvider", e);
+                    logger.error("Failed to store embeddings and response in vectorDBProvider", e);
                 }
             } else {
                 response.clean();
             }
         } else {
-            synLog.auditWarn("SemanticCache: A response message without a valid mapping to the " +
+            synLog.auditWarn("A response message without a valid mapping to the " +
                     "request hash found. Unable to store the response in cache");
         }
     }
@@ -438,110 +413,35 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
     }
 
     private EmbeddingProvider createEmbeddingProvider() {
-        RequestConfig requestConfig = RequestConfig.custom()
-                .setConnectTimeout(this.timeout)
-                .setConnectionRequestTimeout(this.timeout)
-                .setSocketTimeout(this.timeout)
-                .build();
+        Map<String, String> providerConfig =
+                apimConfig.getEmbeddingProviders().get(this.embeddingProviderType.toLowerCase());
 
-        CloseableHttpClient httpClient = HttpClients.custom()
-                .setDefaultRequestConfig(requestConfig)
-                .build();
-
-        EmbeddingProviderType type = EmbeddingProviderType.fromString(this.embeddingProviderType);
-
-        switch (type) {
-            case MISTRAL:
-                /*
-                return new MistralEmbeddingProvider(
-                        httpClient,
-                        this.mistralApiKey,
-                        this.mistralEmbeddingEndpoint,
-                        this.mistralEmbeddingModel
-                );
-                */
-
-                return new MistralEmbeddingProvider(
-                        HttpClients.createDefault(),
-                        "x2c1cKUy3PQxHZMUN2Gjvgpi1fjOVejg",
-                        "https://api.mistral.ai/v1/embeddings",
-                        "mistral-embed"
-                );
-
-            case OPENAI:
-                return new OpenAIEmbeddingProvider(
-                        httpClient,
-                        this.openaiApiKey,
-                        this.openaiEmbeddingEndpoint,
-                        this.openaiEmbeddingModel
-                );
-
-            case AZURE_OPENAI:
-                return new AzureOpenAIEmbeddingProvider(
-                        httpClient,
-                        this.azureOpenaiApiKey,
-                        this.azureOpenaiEmbeddingEndpoint
-                );
-
-            default:
-                throw new IllegalArgumentException("Unsupported provider: " + this.embeddingProviderType);
+        // Load via ServiceLoader
+        ServiceLoader<EmbeddingProvider> loader = ServiceLoader.load(EmbeddingProvider.class);
+        for (EmbeddingProvider provider : loader) {
+            if (provider.getType().equalsIgnoreCase(this.embeddingProviderType)) {
+                provider.init(providerConfig);
+                return provider;
+            }
         }
+
+        throw new IllegalArgumentException("Unsupported or unregistered provider: " + this.embeddingProviderType);
     }
 
     private VectorDBProvider createVectorDBProvider() {
-        VectorDBProviderType type = VectorDBProviderType.fromString(this.vectorDBProviderType);
+        Map<String, String> providerConfig =
+                apimConfig.getVectorDBProviders().get(this.vectorDBProviderType.toLowerCase());
 
-        switch (type) {
-            case REDIS_STACK:
-                UnifiedJedis jedis = new UnifiedJedis(this.redisUnifiedURL);
-                // TODO: Add support for username password security
-                // TODO: Add supoort for truststore.jks security
-                // TODO: Single index vs shared index with additional filter
-                return new RedisVectorDBProvider(jedis, this.ttl, this.embeddingDimensions,
-                        "L2", this.threshold);
-
-            case MILVUS:
-                /*
-                MilvusServiceClient milvusClient = new MilvusServiceClient(
-                        ConnectParam.newBuilder()
-                                .withHost(this.milvusHost)
-                                .withPort(this.milvusPort)
-                                .build());
-                 */
-                ConnectConfig connectConfig = ConnectConfig.builder()
-                        .uri("http://localhost:19530")
-                        .build();
-                MilvusClientV2 milvusClient = new MilvusClientV2(connectConfig);
-
-                return new MilvusVectorDBProvider(
-                        milvusClient,
-                        this.embeddingDimensions,
-                        MetricType.L2.toString(),
-                        this.threshold
-                );
-            default:
-                throw new IllegalArgumentException("Unsupported vector db: " + this.embeddingProviderType);
+        // Load via ServiceLoader
+        ServiceLoader<VectorDBProvider> loader = ServiceLoader.load(VectorDBProvider.class);
+        for (VectorDBProvider provider : loader) {
+            if (provider.getType().equalsIgnoreCase(this.vectorDBProviderType)) {
+                provider.init(providerConfig);
+                return provider;
+            }
         }
-    }
 
-    public String getName() {
-
-        return name;
-    }
-
-    public void setName(String name) {
-
-        this.name = name;
-    }
-
-    public String getVectorIndex() {
-
-        return vectorIndex;
-    }
-
-    public void setVectorIndex(String vectorIndex) {
-
-        this.vectorIndex = vectorIndex;
+        throw new IllegalStateException("No VectorDBProvider found for type: " + this.vectorDBProviderType);
     }
 
     public double getThreshold() {
@@ -549,39 +449,9 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
         return threshold;
     }
 
-    public void setThreshold(double threshold) {
+    public void setThreshold(int threshold) {
 
         this.threshold = threshold;
-    }
-
-    public int getTimeout() {
-
-        return timeout;
-    }
-
-    public void setTimeout(int timeout) {
-
-        this.timeout = timeout;
-    }
-
-    public int getTtl() {
-
-        return ttl;
-    }
-
-    public void setTtl(int ttl) {
-
-        this.ttl = ttl;
-    }
-
-    public int getEmbeddingDimensions() {
-
-        return embeddingDimensions;
-    }
-
-    public void setEmbeddingDimensions(int embeddingDimensions) {
-
-        this.embeddingDimensions = embeddingDimensions;
     }
 
     public String getJsonPath() {
@@ -594,62 +464,23 @@ public class SemanticCache extends AbstractMediator implements ManagedLifecycle 
         this.jsonPath = jsonPath;
     }
 
-    public void setProtocolType(String protocolType) {
+    public String getEmbeddingProviderType() {
 
-        this.protocolType = protocolType;
+        return embeddingProviderType;
     }
 
-    public String getProtocolType() {
-        return protocolType;
+    public void setEmbeddingProviderType(String embeddingProviderType) {
+
+        this.embeddingProviderType = embeddingProviderType;
     }
 
-    public String getResponseCodes() {
+    public String getVectorDBProviderType() {
 
-        return responseCodes;
+        return vectorDBProviderType;
     }
 
-    public void setResponseCodes(String responseCodes) {
+    public void setVectorDBProviderType(String vectorDBProviderType) {
 
-        this.responseCodes = responseCodes;
-    }
-
-    public String[] gethTTPMethodsToCache() {
-
-        return hTTPMethodsToCache;
-    }
-
-    public void sethTTPMethodsToCache(String[] hTTPMethodsToCache) {
-
-        this.hTTPMethodsToCache = hTTPMethodsToCache;
-    }
-
-    public int getMaxMessageSize() {
-
-        return maxMessageSize;
-    }
-
-    public void setMaxMessageSize(int maxMessageSize) {
-
-        this.maxMessageSize = maxMessageSize;
-    }
-
-    public boolean isCacheControlEnabled() {
-
-        return cacheControlEnabled;
-    }
-
-    public void setCacheControlEnabled(boolean cacheControlEnabled) {
-
-        this.cacheControlEnabled = cacheControlEnabled;
-    }
-
-    public boolean isAddAgeHeaderEnabled() {
-
-        return addAgeHeaderEnabled;
-    }
-
-    public void setAddAgeHeaderEnabled(boolean addAgeHeaderEnabled) {
-
-        this.addAgeHeaderEnabled = addAgeHeaderEnabled;
+        this.vectorDBProviderType = vectorDBProviderType;
     }
 }

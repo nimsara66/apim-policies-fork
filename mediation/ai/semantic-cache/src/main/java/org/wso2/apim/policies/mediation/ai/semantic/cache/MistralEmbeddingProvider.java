@@ -4,31 +4,56 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class MistralEmbeddingProvider implements EmbeddingProvider {
 
-    private final CloseableHttpClient httpClient;
-    private final String mistralApiKey;
-    private final String endpointUrl;
-    private final String model;
+    private CloseableHttpClient httpClient;
+    private String mistralApiKey;
+    private String endpointUrl;
+    private String model;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public MistralEmbeddingProvider(CloseableHttpClient httpClient, String mistralApiKey, String endpointUrl,
-                                    String model) {
-        this.httpClient = httpClient;
-        this.mistralApiKey = mistralApiKey;
-        this.endpointUrl = endpointUrl;
-        this.model = model;
+    @Override
+    public void init(Map<String, String> providerConfig) {
+
+        this.mistralApiKey = providerConfig.get("apikey");
+        this.endpointUrl = providerConfig.get("embedding_endpoint");
+        this.model = providerConfig.get("embedding_model");
+
+        if (mistralApiKey == null || endpointUrl == null || model == null) {
+            throw new IllegalArgumentException(
+                    "Missing required Mistral configuration: 'apikey', 'embedding_endpoint', or 'embedding_model'");
+        }
+
+        int timeout = Integer.parseInt(providerConfig.getOrDefault("timeout",
+                String.valueOf(SemanticCacheConstants.DEFAULT_TIMEOUT)));
+        RequestConfig requestConfig = RequestConfig.custom()
+                .setConnectTimeout(timeout)
+                .setConnectionRequestTimeout(timeout)
+                .setSocketTimeout(timeout)
+                .build();
+
+        this.httpClient = HttpClients.custom()
+                .setDefaultRequestConfig(requestConfig)
+                .build();
+    }
+
+    @Override
+    public String getType() {
+        return "MISTRAL";
     }
 
     @Override

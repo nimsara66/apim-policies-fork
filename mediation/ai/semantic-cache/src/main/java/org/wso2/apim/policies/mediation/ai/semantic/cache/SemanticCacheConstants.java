@@ -33,4 +33,8 @@ public class SemanticCacheConstants {
     public static final String NO_STORE_STRING = "no-store";
     public static final String CACHE_KEY = "cacheKey";
     public static final String DATE_PATTERN = "EEE, dd MMM yyyy HH:mm:ss z";
+
+    public static final int DEFAULT_THRESHOLD = 80;
+    public static final int DEFAULT_TIMEOUT = 5000; // 5 seconds
+    public static final String VECTOR_INDEX_PREFIX = "apim_semantic_cache_";
 }

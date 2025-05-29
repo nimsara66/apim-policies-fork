@@ -98,6 +98,12 @@
             <artifactId>milvus-sdk-java</artifactId>
             <version>2.5.9</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.wso2.carbon.apimgt</groupId>
+            <artifactId>org.wso2.carbon.apimgt.impl</artifactId>
+            <version>9.31.101-SNAPSHOT</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -134,6 +140,8 @@
                             org.wso2.apim.policies.mediation.ai.semantic.cache.*;version="${project.version}",
                         </Export-Package>
                         <Import-Package>
+                            org.wso2.carbon.apimgt.impl.APIManagerConfiguration,
+                            org.wso2.carbon.apimgt.impl.internal.ServiceReferenceHolder,
                             !redis.clients.jedis.*,
                             !javax.xml.soap,
                             org.apache.axiom.*; version="${axiom.osgi.version.range}",

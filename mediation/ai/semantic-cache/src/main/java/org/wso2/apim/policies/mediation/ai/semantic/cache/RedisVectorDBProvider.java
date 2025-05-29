@@ -22,36 +22,44 @@ import java.util.Map;
 import java.util.UUID;
 
 public class RedisVectorDBProvider implements VectorDBProvider {
-    private static final Log logger = LogFactory.getLog(RedisVectorDBProvider.class);
-    private final UnifiedJedis jedis;
-    private final int ttlSeconds;
-    private final int dimension;
-    private final double threshold;
-    private final String distanceMetric;
-    private String indexId;
     private static final String KEY_PREFIX = "doc:";
     private static final String EMBEDDING_FIELD = "embedding";
     private static final String RESPONSE_FIELD = "response";
 
-    public RedisVectorDBProvider(UnifiedJedis jedis, int ttlSeconds, int dimension,
-                                 String distanceMetric, double threshold) {
-        this.jedis = jedis;
-        this.ttlSeconds = ttlSeconds;
-        this.dimension = dimension;
-        this.distanceMetric = distanceMetric;
-        this.threshold = threshold;
+    private UnifiedJedis jedis;
+    private String indexId;
+    private int dimension;
+    private int ttl;
+
+    @Override
+    public void init(Map<String, String> providerConfig) {
+        String embeddingDimension = providerConfig.get("embedding_dimension");
+        String redisUrl = providerConfig.get("redis_unified_url"); // e.g. redis://localhost:6379
+
+        if (redisUrl == null || embeddingDimension == null) {
+            throw new IllegalArgumentException("Missing required config: redisUrl");
+        }
+
+        this.indexId = SemanticCacheConstants.VECTOR_INDEX_PREFIX + embeddingDimension;
+        this.dimension = Integer.parseInt(embeddingDimension);
+        this.ttl = Integer.parseInt(providerConfig.getOrDefault("ttl", "36000")); // Default to 1 hour
+
+        this.jedis = new UnifiedJedis(redisUrl);
     }
 
     @Override
-    public void createIndex(String indexId) {
-        try {
-            // Check if index exists
-            jedis.ftInfo(indexId);
+    public String getType() {
+        return "REDIS";
+    }
 
-            // If no exception, index exists — drop it (along with associated documents)
-            jedis.ftDropIndex(indexId);
+    @Override
+    public void createIndex(Map<String, String> config) {
+        try {
+            // Return if index exists
+            jedis.ftInfo(this.indexId);
+            return;
         } catch (Exception e) {
-            logger.info("Index {} does not exist, creating a new one.");
+            // Skip
         }
 
         SchemaField[] schema = {
@@ -62,23 +70,22 @@ public class RedisVectorDBProvider implements VectorDBProvider {
                                 Map.of(
                                         "TYPE", "FLOAT32",
                                         "DIM", this.dimension,
-                                        "DISTANCE_METRIC", this.distanceMetric
+                                        "DISTANCE_METRIC", "L2"
                                 )
                         )
                         .build()
         };
 
-        jedis.ftCreate(indexId,
+        jedis.ftCreate(this.indexId,
                 FTCreateParams.createParams()
                         .addPrefix("doc:")
                         .on(IndexDataType.HASH),
                 schema
         );
-        this.indexId = indexId;
     }
 
     @Override
-    public void store(float[] embeddings, CachableResponse response) throws IOException {
+    public void store(float[] embeddings, CachableResponse response, Map<String, String> filter) throws IOException {
         // Convert embedding to binary
         byte[] embeddingBytes = floatArrayToByteArray(embeddings);
 
@@ -90,22 +97,24 @@ public class RedisVectorDBProvider implements VectorDBProvider {
 
         Map<String, Object> doc = new HashMap<>();
         doc.put(EMBEDDING_FIELD, embeddingBytes);
+        doc.put("api_id", filter.get("api_id"));
         doc.put(RESPONSE_FIELD, responseBytes);
 
         jedis.hset(redisKey.getBytes(), toBinaryMap(doc));
-        if (this.ttlSeconds > 0) {
-            jedis.expire(redisKey.getBytes(), this.ttlSeconds);
+        if (this.ttl > 0) {
+            jedis.expire(redisKey.getBytes(), this.ttl);
         }
     }
 
     @Override
-    public CachableResponse retrieve(float[] embeddings) throws IOException {
+    public CachableResponse retrieve(float[] embeddings, Map<String, String> filter) throws IOException {
         // Convert float[] embedding to byte[] as Redis expects binary blob
         byte[] blob = floatArrayToByteArray(embeddings);
         int K = 1;
 
         // Build the query
-        String knnQuery = String.format("*=>[KNN $K @%s $BLOB AS score]", EMBEDDING_FIELD);
+        String knnQuery = String.format(
+                "@api_id:{%s}=>[KNN $K @%s $BLOB AS score]", filter.get("api_id"), EMBEDDING_FIELD);
         Query query = new Query(knnQuery)
                 .returnFields(RESPONSE_FIELD, "score")
                 .addParam("K", K)
@@ -120,7 +129,7 @@ public class RedisVectorDBProvider implements VectorDBProvider {
 
         // Optional: use the score to filter by a similarity threshold
         Double score = doc.getScore();
-        if (score < this.threshold) return null;
+        if (score < Integer.parseInt(filter.get("threshold"))) return null;
 
         // Deserialize binary response
         byte[] responseBytes = jedis.hget(doc.getId().getBytes(), RESPONSE_FIELD.getBytes());

@@ -4,30 +4,55 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class OpenAIEmbeddingProvider implements EmbeddingProvider {
 
-    private final CloseableHttpClient httpClient;
-    private final String openAiApiKey;
-    private final String endpointUrl;
-    private final String model;
+    private CloseableHttpClient httpClient;
+    private String openAiApiKey;
+    private String endpointUrl;
+    private String model;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public OpenAIEmbeddingProvider(CloseableHttpClient httpClient, String openAiApiKey, String endpointUrl, String model) {
-        this.httpClient = httpClient;
-        this.openAiApiKey = openAiApiKey;
-        this.endpointUrl = endpointUrl;
-        this.model = model;
+    @Override
+    public void init(Map<String, String> providerConfig) {
+
+        this.openAiApiKey = providerConfig.get("apikey");
+        this.endpointUrl = providerConfig.get("embedding_endpoint");
+        this.model = providerConfig.get("embedding_model");
+
+        if (openAiApiKey == null || endpointUrl == null || model == null) {
+            throw new IllegalArgumentException("Missing required OpenAI configuration: 'apikey', 'embedding_endpoint', or 'embedding_model'");
+        }
+
+        int timeout = Integer.parseInt(providerConfig.getOrDefault("timeout",
+                String.valueOf(SemanticCacheConstants.DEFAULT_TIMEOUT)));
+        RequestConfig requestConfig = RequestConfig.custom()
+                .setConnectTimeout(timeout)
+                .setConnectionRequestTimeout(timeout)
+                .setSocketTimeout(timeout)
+                .build();
+
+        this.httpClient = HttpClients.custom()
+                .setDefaultRequestConfig(requestConfig)
+                .build();
+    }
+
+    @Override
+    public String getType() {
+        return "OPENAI";
     }
 
     @Override
@@ -89,5 +114,4 @@ public class OpenAIEmbeddingProvider implements EmbeddingProvider {
             return embeddings;
         }
     }
-
 }
