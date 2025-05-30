@@ -34,7 +34,6 @@ import org.apache.synapse.mediators.AbstractMediator;
 import org.json.JSONObject;
 
 import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 /**
  * Regex Guardrail mediator.
@@ -64,7 +63,7 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
     @Override
     public void init(SynapseEnvironment synapseEnvironment) {
         if (logger.isDebugEnabled()) {
-            logger.debug("RegexGuardrail: Initialized.");
+            logger.debug("Initializing RegexGuardrail.");
         }
     }
 
@@ -79,7 +78,7 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("RegexGuardrail: Beginning payload validation.");
+            logger.debug("Beginning payload validation.");
         }
 
         try {
@@ -99,7 +98,7 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
 
                 if (logger.isDebugEnabled()) {
-                    logger.debug("RegexGuardrail: Validation failed - triggering fault sequence.");
+                    logger.debug("Validation failed - triggering fault sequence.");
                 }
 
                 Mediator faultMediator = messageContext.getSequence(RegexGuardrailConstants.FAULT_SEQUENCE_KEY);
@@ -107,7 +106,7 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
                 return false; // Stop further processing
             }
         } catch (Exception e) {
-            logger.error("RegexGuardrail: Exception occurred during mediation.", e);
+            logger.error("Exception occurred during mediation.", e);
 
             messageContext.setProperty(SynapseConstants.ERROR_CODE,
                     RegexGuardrailConstants.APIM_INTERNAL_EXCEPTION_CODE);
@@ -129,7 +128,7 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
      */
     private boolean validatePayload(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("RegexGuardrail: Extracting content for validation.");
+            logger.debug("Extracting content for validation.");
         }
 
         String jsonContent = extractJsonContent(messageContext);
@@ -172,7 +171,7 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
      */
     private String buildAssessmentObject() {
         if (logger.isDebugEnabled()) {
-            logger.debug("RegexGuardrail: Building assessment");
+            logger.debug("Building assessment");
         }
 
         JSONObject assessmentObject = new JSONObject();
@@ -206,14 +205,10 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
     public void setRegex(String regex) {
 
         this.regex = regex;
+        this.pattern = Pattern.compile(regex);
 
-        try {
-            this.pattern = Pattern.compile(regex);
-            if (logger.isDebugEnabled()) {
-                logger.debug("RegexGuardrail: Regex pattern compiled successfully: " + regex);
-            }
-        } catch (PatternSyntaxException e) {
-            logger.error("RegexGuardrail: Invalid regex pattern: " + regex, e);
+        if (logger.isDebugEnabled()) {
+            logger.debug("Regex pattern compiled successfully: " + regex);
         }
     }
 
