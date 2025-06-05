@@ -23,6 +23,7 @@ package org.wso2.apim.policies.mediation.ai.json.schema.guardrail;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
+import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.synapse.ManagedLifecycle;
@@ -54,9 +55,11 @@ import java.util.regex.PatternSyntaxException;
 public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(JSONSchemaGuardrail.class);
 
+    private String name;
     private String schema;
     private String jsonPath = "";
     private boolean doInvert = false;
+    private boolean hideAssessment = false;
     private Schema schemaObj;
 
     /**
@@ -67,7 +70,7 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
     @Override
     public void init(SynapseEnvironment synapseEnvironment) {
         if (logger.isDebugEnabled()) {
-            logger.debug("JSONSchemaGuardrail: Initialized.");
+            logger.debug("Initializing JSONSchemaGuardrail");
         }
     }
 
@@ -91,27 +94,23 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("JSONSchemaGuardrail: Beginning guardrail evaluation.");
+            logger.debug("Beginning guardrail evaluation.");
         }
 
         try {
-            boolean validationResult = validatePayload(messageContext);
-            boolean finalResult = doInvert != validationResult;
+            boolean doTriggerGuardrailError = validatePayload(messageContext);
 
-            if (!finalResult) {
+            if (doTriggerGuardrailError) {
                 // Set error properties in message context
                 messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        JSONSchemaGuardrailConstants.ERROR_CODE);
-                messageContext.setProperty(JSONSchemaGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
+                        JSONSchemaGuardrailConstants.GUARDRAIL_APIM_EXCEPTION_CODE);
+                messageContext.setProperty(JSONSchemaGuardrailConstants.ERROR_TYPE,
+                        JSONSchemaGuardrailConstants.JSON_SCHEMA_GUARDRAIL);
                 messageContext.setProperty(JSONSchemaGuardrailConstants.CUSTOM_HTTP_SC,
-                        JSONSchemaGuardrailConstants.ERROR_CODE);
-
-                // Build assessment details
-                String assessmentObject = buildAssessmentObject();
-                messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
+                        JSONSchemaGuardrailConstants.GUARDRAIL_ERROR_CODE);
 
                 if (logger.isDebugEnabled()) {
-                    logger.debug("JSONSchemaGuardrail: Triggering configured fault sequence.");
+                    logger.debug("Triggering configured fault sequence.");
                 }
 
                 Mediator faultMediator = messageContext.getSequence(JSONSchemaGuardrailConstants.FAULT_SEQUENCE_KEY);
@@ -119,7 +118,15 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
                 return false; // Stop further processing
             }
         } catch (Exception e) {
-            logger.error("JSONSchemaGuardrail: Error during guardrail mediation.", e);
+            logger.error("Error during guardrail mediation.", e);
+
+            messageContext.setProperty(SynapseConstants.ERROR_CODE,
+                    JSONSchemaGuardrailConstants.APIM_INTERNAL_EXCEPTION_CODE);
+            messageContext.setProperty(SynapseConstants.ERROR_MESSAGE,
+                    "Error occurred during JSONSchemaGuardrail mediation");
+            Mediator faultMediator = messageContext.getFaultSequence();
+            faultMediator.mediate(messageContext);
+            return false; // Stop further processing
         }
 
         return true;
@@ -133,7 +140,7 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
      */
     private boolean validatePayload(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("JSONSchemaGuardrail: Validating extracted JSON payload.");
+            logger.debug("Validating extracted JSON payload.");
         }
 
         String jsonContent = extractJsonContent(messageContext);
@@ -143,11 +150,11 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
 
         // If no JSON path is specified, apply regex to the entire JSON content
         if (this.jsonPath == null || this.jsonPath.trim().isEmpty()) {
-            return validateJsonAgainstSchema(jsonContent);
+            return validateJsonAgainstSchema(jsonContent, messageContext);
         }
 
         // Check if any extracted value by json path matches the regex pattern
-        return validateJsonAgainstSchema(JsonPath.read(jsonContent, this.jsonPath).toString());
+        return validateJsonAgainstSchema(JsonPath.read(jsonContent, this.jsonPath).toString(), messageContext);
     }
 
     /**
@@ -156,27 +163,39 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
      * @param input The JSON string to validate.
      * @return {@code true} if a valid match is found; otherwise, {@code false}.
      */
-    private boolean validateJsonAgainstSchema(String input) {
+    private boolean validateJsonAgainstSchema(String input, MessageContext messageContext) {
 
         if (logger.isDebugEnabled()) {
-            logger.debug("JSONSchemaGuardrail: Executing schema validation on input.");
+            logger.debug("Executing schema validation on input.");
         }
 
         ObjectMapper objectMapper = new ObjectMapper();
         Pattern pattern = Pattern.compile(JSONSchemaGuardrailConstants.JSON_CONTENT_REGEX, Pattern.DOTALL);
         Matcher matcher = pattern.matcher(input);
 
+        boolean matchedAndValid = false;
+
         while (matcher.find()) {
             String candidate = matcher.group(0);
             try {
-                JsonNode node = objectMapper.readTree(candidate);
+                String unescapedCandidate = StringEscapeUtils.unescapeJava(candidate);
+                JsonNode node = objectMapper.readTree(unescapedCandidate);
                 this.schemaObj.validate(new JSONObject(node.toString()));
-                return true;
+                matchedAndValid =  true;
+                break; // Exit loop on first valid match
             } catch (Exception ignore) {
                 // Continue to next match
             }
         }
-        return false;
+
+        boolean finalResult = doInvert != matchedAndValid;
+        if (!finalResult) {
+            // Early build assessment details
+            String assessmentObject = buildAssessmentObject(input, messageContext.isResponse());
+            messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
+        }
+
+        return !finalResult;
     }
 
     /**
@@ -198,18 +217,35 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
      *
      * @return A JSON string containing assessment details and guardrail action information
      */
-    private String buildAssessmentObject() {
+    private String buildAssessmentObject(String content, boolean isResponse) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Regex Guardrail assessment creation");
+            logger.debug("Building guardrail assessment object.");
         }
 
         JSONObject assessmentObject = new JSONObject();
 
         assessmentObject.put(JSONSchemaGuardrailConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
-        assessmentObject.put(JSONSchemaGuardrailConstants.ASSESSMENT_REASON, "Guardrail blocked.");
-        assessmentObject.put(JSONSchemaGuardrailConstants.ASSESSMENTS,
-                "Violation of regular expression: " + schema + " detected.");
+        assessmentObject.put(JSONSchemaGuardrailConstants.INTERVENING_GUARDRAIL, this.getName());
+        assessmentObject.put(JSONSchemaGuardrailConstants.DIRECTION, isResponse? "RESPONSE" : "REQUEST");
+        assessmentObject.put(JSONSchemaGuardrailConstants.ASSESSMENT_REASON,
+                "Violation of enforced JSON schema detected.");
+
+        if (!this.hideAssessment) {
+            String message = "The inspected response payload content: " + content
+                    + " does not satisfy the JSON schema: " + schema;
+            assessmentObject.put(JSONSchemaGuardrailConstants.ASSESSMENTS, message);
+        }
         return assessmentObject.toString();
+    }
+
+    public String getName() {
+
+        return name;
+    }
+
+    public void setName(String name) {
+
+        this.name = name;
     }
 
     public String getSchema() {
@@ -246,5 +282,15 @@ public class JSONSchemaGuardrail extends AbstractMediator implements ManagedLife
     public void setDoInvert(boolean doInvert) {
 
         this.doInvert = doInvert;
+    }
+
+    public boolean isHideAssessment() {
+
+        return hideAssessment;
+    }
+
+    public void setHideAssessment(boolean hideAssessment) {
+
+        this.hideAssessment = hideAssessment;
     }
 }

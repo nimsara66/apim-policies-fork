@@ -1,0 +1,72 @@
+{
+  "category": "Mediation",
+  "name": "SentenceCountGuardrail",
+  "version": "v1.0",
+  "displayName": "Sentence Count Guardrail",
+  "description": "Validates the request or response content to ensure it complies with the specified minimum and maximum sentence count limits.",
+  "applicableFlows": [
+    "request",
+    "response"
+  ],
+  "supportedGateways": [
+    "Synapse"
+  ],
+  "supportedApiTypes": [
+    {
+      "subType": "AIAPI",
+      "apiType": "HTTP"
+    }
+  ],
+  "policyAttributes": [
+    {
+      "name": "name",
+      "displayName": "Guardrail Name",
+      "description": "The name of the guardrail policy. This will be used for tracking purposes.",
+      "type": "String",
+      "allowedValues": [],
+      "required": true
+    },
+    {
+      "name": "min",
+      "displayName": "Minimum Sentence Count",
+      "description": "The minimum number of sentences the content must contain.",
+      "type": "Integer",
+      "allowedValues": [],
+      "required": true
+    },
+    {
+      "name": "max",
+      "displayName": "Maximum Sentence Count",
+      "description": "The maximum number of sentences the content must contain.",
+      "type": "Integer",
+      "allowedValues": [],
+      "required": true
+    },
+    {
+      "name": "jsonPath",
+      "displayName": "JSON Path",
+      "description": "The JSONPath expression used to extract content from the payload. If not specified, the entire payload will be used for validation.",
+      "type": "String",
+      "allowedValues": [],
+      "required": false
+    },
+    {
+      "name": "doInvert",
+      "displayName": "Invert the Guardrail Decision",
+      "description": "If enabled, inverts the guardrail blocking decision, causing the guardrail to intervene and return an error response when a match is found in the content.",
+      "type": "Boolean",
+      "allowedValues": [],
+      "defaultValue": "false",
+      "required": false
+    },
+    {
+      "name": "hideAssessment",
+      "displayName": "Hide Guardrail Assessment",
+      "description": "When enabled, the error response will omit detailed information about the reason for the guardrail intervention.",
+      "type": "Boolean",
+      "defaultValue": "false",
+      "allowedValues": [],
+      "required": false
+    }
+  ]
+}

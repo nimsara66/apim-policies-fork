@@ -1,0 +1,3 @@
+org.wso2.apim.policies.mediation.ai.semantic.prompt.guard.OpenAIEmbeddingProvider
+org.wso2.apim.policies.mediation.ai.semantic.prompt.guard.AzureOpenAIEmbeddingProvider
+org.wso2.apim.policies.mediation.ai.semantic.prompt.guard.MistralEmbeddingProvider

@@ -50,8 +50,9 @@ import java.util.List;
 public class PromptDecorator extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(PromptDecorator.class);
 
+    private String name;
     private String promptDecoratorConfig;
-    private boolean prepend = true;
+    private boolean append = false;
     private String jsonPath;
     private PromptDecoratorConstants.DecorationType type;
     private String decoration;
@@ -64,7 +65,7 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
     @Override
     public void init(SynapseEnvironment synapseEnvironment) {
         if (logger.isDebugEnabled()) {
-            logger.debug("PromptDecorator: Initialized.");
+            logger.debug("Initializing PromptDecorator.");
         }
     }
 
@@ -87,13 +88,13 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("PromptDecorator: Mediating message context with prompt decorator.");
+            logger.debug("Mediating message context with prompt decorator.");
         }
 
         try {
             findAndTransformPayload(messageContext);
         } catch (Exception e) {
-            logger.error("PromptDecorator: Error during mediation of message context", e);
+            logger.error("Error during mediation of message context", e);
         }
 
         return true;
@@ -109,7 +110,7 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
      */
     private void findAndTransformPayload(MessageContext messageContext) throws AxisFault {
         if (logger.isDebugEnabled()) {
-            logger.debug("PromptDecorator: Transforming JSON payload using JSONPath: " + jsonPath);
+            logger.debug( this.getName() + " decorating JSON payload.");
         }
 
         String jsonContent = extractJsonContent(messageContext);
@@ -124,7 +125,7 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
             // Read the existing string at the path
             String existingValue = documentContext.read(this.jsonPath, String.class);
 
-            String updatedValue = this.prepend
+            String updatedValue = !this.append
                     ? this.decoration + " " + existingValue
                     : existingValue + " " + this.decoration;
 
@@ -142,7 +143,7 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
 
             List<Object> updatedArray = new ArrayList<>();
 
-            if (this.prepend) {
+            if (!this.append) {
                 updatedArray.addAll(decorationList);
                 updatedArray.addAll(existingArray);
             } else {
@@ -153,7 +154,7 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
             // Set the updated array back
             documentContext.set(this.jsonPath, updatedArray);
         } else {
-            logger.warn("PromptDecorator: Unknown decoration type: " + this.type);
+            logger.warn("Unknown decoration type: " + this.type);
         }
 
         // Update the modified JSON
@@ -180,6 +181,16 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
         return JsonUtil.jsonPayloadToString(axis2MC);
     }
 
+    public String getName() {
+
+        return name;
+    }
+
+    public void setName(String name) {
+
+        this.name = name;
+    }
+
     public String getPromptDecoratorConfig() {
 
         return promptDecoratorConfig;
@@ -201,7 +212,7 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
                     && root.get(PromptDecoratorConstants.DECORATION).isJsonPrimitive()
                     && root.get(PromptDecoratorConstants.DECORATION).getAsJsonPrimitive().isString()) {
                 this.type = PromptDecoratorConstants.DecorationType.STRING;
-                this.decoration = root.getAsString();
+                this.decoration = root.get(PromptDecoratorConstants.DECORATION).getAsString();
             } else {
                 logger.error("Invalid prompt template provided: " + promptDecoratorConfig);
             }
@@ -210,14 +221,14 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
         }
     }
 
-    public boolean isPrepend() {
+    public boolean isAppend() {
 
-        return prepend;
+        return append;
     }
 
-    public void setPrepend(boolean prepend) {
+    public void setAppend(boolean append) {
 
-        this.prepend = prepend;
+        this.append = append;
     }
 
     public String getJsonPath() {

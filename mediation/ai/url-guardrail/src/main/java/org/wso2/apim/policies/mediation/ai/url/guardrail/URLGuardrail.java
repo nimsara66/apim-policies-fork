@@ -23,6 +23,12 @@ package org.wso2.apim.policies.mediation.ai.url.guardrail;
 import com.jayway.jsonpath.JsonPath;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.http.HttpResponse;
+import org.apache.http.HttpVersion;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.methods.HttpHead;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
 import org.apache.synapse.ManagedLifecycle;
 import org.apache.synapse.Mediator;
 import org.apache.synapse.MessageContext;
@@ -73,7 +79,7 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
     private String jsonPath = "";
     private int timeout = 5000;
     private boolean onlyDNS = false;
-    private boolean buildAssessment = true;
+    private boolean hideAssessment = true;
 
     /**
      * Initializes the URLGuardrail mediator.
@@ -119,7 +125,7 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
                         URLGuardrailConstants.GUARDRAIL_ERROR_CODE);
 
                 // Build assessment details
-                String assessmentObject = buildAssessmentObject(invalidUrls);
+                String assessmentObject = buildAssessmentObject(invalidUrls, messageContext.isResponse());
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
                 logger.info("Validation failed - triggering fault sequence.");
 
@@ -217,24 +223,22 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
      * @return true if reachable, false otherwise
      */
     private boolean checkUrl(String target) {
-        HttpURLConnection connection = null;
-        try {
-            URL url = new URL(target);
-            connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("HEAD");
-            connection.setRequestProperty("User-Agent", "URLValidator/1.0");
-            connection.setConnectTimeout(this.timeout);
-            connection.setReadTimeout(this.timeout);
-            connection.connect();
+        try (CloseableHttpClient client = HttpClients.custom().build()) {
+            HttpHead request = new HttpHead(target);
+            request.setProtocolVersion(HttpVersion.HTTP_1_1);
+            request.setHeader("User-Agent", "URLValidator/1.0");
 
-            int responseCode = connection.getResponseCode();
-            return responseCode >= 200 && responseCode < 400;
+            RequestConfig config = RequestConfig.custom()
+                    .setConnectTimeout(this.timeout)
+                    .setSocketTimeout(this.timeout)
+                    .build();
+            request.setConfig(config);
+
+            HttpResponse response = client.execute(request);
+            int statusCode = response.getStatusLine().getStatusCode();
+            return statusCode >= 200 && statusCode < 400;
         } catch (IOException e) {
             return false;
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
         }
     }
 
@@ -290,18 +294,19 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
      *
      * @return A JSON string representing the assessment object
      */
-    private String buildAssessmentObject(List<String> invalidUrls) {
+    private String buildAssessmentObject(List<String> invalidUrls, boolean isResponse) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Building assessment");
+            logger.debug("Building guardrail assessment object.");
         }
 
         JSONObject assessmentObject = new JSONObject();
 
         assessmentObject.put(URLGuardrailConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
         assessmentObject.put(URLGuardrailConstants.INTERVENING_GUARDRAIL, this.getName());
+        assessmentObject.put(URLGuardrailConstants.DIRECTION, isResponse? "RESPONSE" : "REQUEST");
         assessmentObject.put(URLGuardrailConstants.ASSESSMENT_REASON, "Violation of url validity detected.");
 
-        if (this.buildAssessment) {
+        if (!this.hideAssessment) {
             JSONObject assessmentDetails = new JSONObject();
             assessmentDetails.put("message", "One or more URLs in the payload failed validation.");
             assessmentDetails.put("invalidUrls", new JSONArray(invalidUrls));
@@ -351,13 +356,13 @@ public class URLGuardrail extends AbstractMediator implements ManagedLifecycle {
         this.onlyDNS = onlyDNS;
     }
 
-    public boolean isBuildAssessment() {
+    public boolean isHideAssessment() {
 
-        return buildAssessment;
+        return hideAssessment;
     }
 
-    public void setBuildAssessment(boolean buildAssessment) {
+    public void setHideAssessment(boolean hideAssessment) {
 
-        this.buildAssessment = buildAssessment;
+        this.hideAssessment = hideAssessment;
     }
 }

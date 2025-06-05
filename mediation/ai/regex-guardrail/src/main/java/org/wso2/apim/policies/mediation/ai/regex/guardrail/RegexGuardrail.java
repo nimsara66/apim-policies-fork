@@ -52,7 +52,7 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
     private String regex;
     private String jsonPath = "";
     private boolean doInvert = false;
-    private boolean buildAssessment = true;
+    private boolean hideAssessment = false;
     private Pattern pattern;
 
     /**
@@ -94,7 +94,7 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
                         RegexGuardrailConstants.GUARDRAIL_ERROR_CODE);
 
                 // Build assessment details
-                String assessmentObject = buildAssessmentObject();
+                String assessmentObject = buildAssessmentObject(messageContext.isResponse());
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
 
                 if (logger.isDebugEnabled()) {
@@ -110,9 +110,12 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
 
             messageContext.setProperty(SynapseConstants.ERROR_CODE,
                     RegexGuardrailConstants.APIM_INTERNAL_EXCEPTION_CODE);
-            messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, "Error occurred during RegexGuardrail mediation");
+            messageContext.setProperty(SynapseConstants.ERROR_MESSAGE,
+                    "Error occurred during RegexGuardrail mediation");
             Mediator faultMediator = messageContext.getFaultSequence();
             faultMediator.mediate(messageContext);
+
+            return false; // Stop further processing
         }
 
         return true;
@@ -169,18 +172,19 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
      *
      * @return A JSON string representing the assessment object
      */
-    private String buildAssessmentObject() {
+    private String buildAssessmentObject(boolean isResponse) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Building assessment");
+            logger.debug("Building guardrail assessment object.");
         }
 
         JSONObject assessmentObject = new JSONObject();
 
         assessmentObject.put(RegexGuardrailConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
         assessmentObject.put(RegexGuardrailConstants.INTERVENING_GUARDRAIL, this.getName());
+        assessmentObject.put(RegexGuardrailConstants.DIRECTION, isResponse? "RESPONSE" : "REQUEST");
         assessmentObject.put(RegexGuardrailConstants.ASSESSMENT_REASON, "Violation of regular expression detected.");
 
-        if (this.buildAssessment) {
+        if (!this.hideAssessment) {
             assessmentObject.put(RegexGuardrailConstants.ASSESSMENTS,
                     "Violated regular expression: " + regex);
         }
@@ -232,13 +236,13 @@ public class RegexGuardrail extends AbstractMediator implements ManagedLifecycle
         this.doInvert = doInvert;
     }
 
-    public boolean isBuildAssessment() {
+    public boolean isHideAssessment() {
 
-        return buildAssessment;
+        return hideAssessment;
     }
 
-    public void setBuildAssessment(boolean buildAssessment) {
+    public void setHideAssessment(boolean hideAssessment) {
 
-        this.buildAssessment = buildAssessment;
+        this.hideAssessment = hideAssessment;
     }
 }

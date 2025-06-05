@@ -8,39 +8,20 @@
     </parent>
 
     <artifactId>org.wso2.apim.policies.mediation.ai.json-schema-guardrail</artifactId>
-    <packaging>jar</packaging>
+    <packaging>bundle</packaging>
     <name>WSO2 APIM Mediation Policies - JSON Schema Guardrail</name>
 
     <properties>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <wso2carbon.version>4.7.0</wso2carbon.version>
-        <synapse.version>4.0.0-wso2v218</synapse.version>
-        <jackson.version>2.13.5</jackson.version>
-        <httpclient.version>4.5.14</httpclient.version>
-        <junit.version>4.13.2</junit.version>
-        <mockito.version>4.11.0</mockito.version>
-        <json.orbit.version>3.0.0.wso2v1</json.orbit.version>
-        <maven-site-plugin.version>3.3</maven-site-plugin.version>
-        <apache.commons.lang3.version>3.17.0</apache.commons.lang3.version>
-        <imp.pkg.version.axis2>[1.6.1, 1.7.0)</imp.pkg.version.axis2>
-        <javax.xml.soap.imp.pkg.version>0.0.0</javax.xml.soap.imp.pkg.version>
+        <synapse.version>4.0.0-wso2v131</synapse.version>
+        <jackson.version>2.19.0</jackson.version>
+        <com.jayway.jsonpath.version>2.9.0.wso2v1</com.jayway.jsonpath.version>
+        <json.orbit.version>3.0.0.wso2v6</json.orbit.version>
+        <everit-json-schema.version>1.14.5</everit-json-schema.version>
         <import.package.version.commons.logging>[1.2.0,2.0.0)</import.package.version.commons.logging>
-        <javax.xml.stream.imp.pkg.version>[1.0.1, 1.1.0)</javax.xml.stream.imp.pkg.version>
-        <axiom.osgi.version.range>[1.2.11, 1.3.0)</axiom.osgi.version.range>
         <axis2.osgi.version.range>[1.6.1, 1.7.0)</axis2.osgi.version.range>
     </properties>
 
     <dependencies>
-        <!-- WSO2 Carbon Dependencies -->
-        <dependency>
-            <groupId>org.wso2.carbon</groupId>
-            <artifactId>org.wso2.carbon.core</artifactId>
-            <version>${wso2carbon.version}</version>
-            <scope>provided</scope>
-        </dependency>
-
         <!-- Synapse Dependencies -->
         <dependency>
             <groupId>org.apache.synapse</groupId>
@@ -49,24 +30,11 @@
             <scope>provided</scope>
         </dependency>
 
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-lang3</artifactId>
-            <version>${apache.commons.lang3.version}</version>
-        </dependency>
-
         <!-- Jackson for JSON Processing -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>${jackson.version}</version>
-        </dependency>
-
-        <!-- HTTP Client -->
-        <dependency>
-            <groupId>org.apache.httpcomponents</groupId>
-            <artifactId>httpclient</artifactId>
-            <version>${httpclient.version}</version>
         </dependency>
 
         <!-- JSON Library -->
@@ -79,13 +47,13 @@
         <dependency>
             <groupId>org.wso2.orbit.com.jayway.jsonpath</groupId>
             <artifactId>json-path</artifactId>
-            <version>2.9.0.wso2v1</version>
+            <version>${com.jayway.jsonpath.version}</version>
         </dependency>
 
         <dependency>
             <groupId>com.github.erosb</groupId>
             <artifactId>everit-json-schema</artifactId>
-            <version>1.14.5</version>
+            <version>${everit-json-schema.version}</version>
             <exclusions>
                 <exclusion>
                     <groupId>org.json</groupId>
@@ -101,7 +69,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.11.0</version>
+                <version>${maven-compiler-plugin.version}</version>
                 <configuration>
                     <source>${maven.compiler.source}</source>
                     <target>${maven.compiler.target}</target>
@@ -111,18 +79,21 @@
             <plugin>
                 <groupId>org.apache.felix</groupId>
                 <artifactId>maven-bundle-plugin</artifactId>
+                <version>${org.apache.felix.version}</version>
                 <extensions>true</extensions>
                 <configuration>
                     <instructions>
                         <Bundle-SymbolicName>${project.artifactId}</Bundle-SymbolicName>
                         <Bundle-Name>${project.artifactId}</Bundle-Name>
                         <Export-Package>
-                            org.wso2.apim.policies.mediation.ai.json.schema.guardrail.*;version="${project.version}",
+                            org.wso2.apim.policies.mediation.ai.json.schema.guardrail;version="${project.version}",
                         </Export-Package>
                         <Import-Package>
-                            !javax.xml.soap,
-                            javax.xml.stream.*; version="${javax.xml.stream.imp.pkg.version}",
-                            org.apache.axiom.*; version="${axiom.osgi.version.range}",
+                            !com.jayway.jsonpath.*,
+                            !net.minidev.json.*,
+                            !net.minidev.asm.*,
+                            !org.json.*,
+                            !com.github.erosb.*,
                             org.apache.axis2; version="${axis2.osgi.version.range}",
                             org.apache.axis2.description; version="${axis2.osgi.version.range}",
                             org.apache.axis2.engine; version="${axis2.osgi.version.range}",
@@ -134,25 +105,16 @@
                             org.apache.synapse.config.xml,
                             org.apache.synapse.core,
                             org.apache.synapse.core.axis2,
-                            org.apache.synapse.endpoints.*,
                             org.apache.synapse.mediators.base,
                             org.apache.axis2.transport.base,
-                            javax.xml.soap; version="${javax.xml.soap.imp.pkg.version}",
-                            edu.emory.mathcs.backport.*,
-                            org.apache.axis2.*; version="${imp.pkg.version.axis2}",
-                            javax.activation.*; version="[0.0.0, 1.0.0)",
-                            javax.cache,
-                            javax.net.ssl,
-                            javax.xml.namespace,
-                            org.apache.http.*,
-                            org.apache.commons.lang3;version="${apache.commons.lang3.version}",
-                            org.apache.commons.*,
-                            org.apache.commons.lang3.*,
                             org.apache.synapse.*,
-                            javax.annotation;version=0.0.0;resolution:=optional,
-                            com.jayway.jsonpath;version="[2.9,3)"
                             *;resolution:=optional
                         </Import-Package>
+                        <Embed-Dependency>
+                            json;scope=compile|runtime,
+                            json-path;scope=compile|runtime,
+                            everit-json-schema;scope=compile|runtime,
+                        </Embed-Dependency>
                         <DynamicImport-Package>*</DynamicImport-Package>
                     </instructions>
                 </configuration>

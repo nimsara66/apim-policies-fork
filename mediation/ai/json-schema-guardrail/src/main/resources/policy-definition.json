@@ -1,0 +1,63 @@
+{
+  "category": "Mediation",
+  "name": "JSONSchemaGuardrail",
+  "displayName": "JSON Schema Guardrail",
+  "version": "v1.0",
+  "description": "Validate the response to contain a JSON that adheres to a defined schema",
+  "applicableFlows": [
+    "request",
+    "response"
+  ],
+  "supportedApiTypes": [
+    {
+      "subType": "AIAPI",
+      "apiType": "HTTP"
+    }
+  ],
+  "supportedGateways": [
+    "Synapse"
+  ],
+  "policyAttributes": [
+    {
+      "name": "name",
+      "displayName": "Guardrail Name",
+      "description": "The name of the guardrail policy. This will be used for tracking purposes.",
+      "type": "String",
+      "allowedValues": [],
+      "required": true
+    },
+    {
+      "name": "schema",
+      "displayName": "JSON Schema",
+      "description": "The JSON Schema used to validate the structure of the content.",
+      "required": true,
+      "type": "JSON",
+      "allowedValues": []
+    },
+    {
+      "name": "jsonPath",
+      "displayName": "JSON Path",
+      "description": "The JSONPath expression used to extract content from the payload. If not specified, the entire payload will be used for validation.",
+      "type": "String",
+      "allowedValues": [],
+      "required": false
+    },
+    {
+      "name": "doInvert",
+      "displayName": "Invert the Decision",
+      "description": "Inverts the guardrail decision so that it fails if the content matches the defined schema.",
+      "required": false,
+      "type": "Boolean",
+      "allowedValues": []
+    },
+    {
+      "name": "hideAssessment",
+      "displayName": "Hide Guardrail Assessment",
+      "description": "When enabled, the error response will omit detailed information about the reason for the guardrail intervention.",
+      "type": "Boolean",
+      "defaultValue": "false",
+      "allowedValues": [],
+      "required": false
+    }
+  ]
+}

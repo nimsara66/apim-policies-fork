@@ -28,13 +28,17 @@ public class AzureContentSafetyConstants {
     public static String FAULT_SEQUENCE_KEY = "custom_fault";
     public static String ASSESSMENT_ACTION = "action";
     public static String INTERVENING_GUARDRAIL = "interveningGuardrail";
+    public static String DIRECTION = "direction";
     public static String AZURE_CONTENT_SAFETY_PROMPT_GUARD = "AZURE_CONTENT_SAFETY_PROMPT_GUARD";
+    public static String AZURE_CONTENT_SAFETY_CONTENT_MODERATION = "AZURE_CONTENT_SAFETY_CONTENT_MODERATION";
     public static int APIM_INTERNAL_EXCEPTION_CODE = 900967;
     public static String ASSESSMENT_REASON = "actionReason";
     public static String ASSESSMENTS = "assessments";
-    public static String JSON_CLEAN_REGEX = "^\"|\"$";
+    public static String TEXT_CLEAN_REGEX = "^\"|\"$";
 
     public static String AZURE_CONTENT_SAFETY_PROMPT_SHIELD_ENDPOINT =
             "/contentsafety/text:shieldPrompt?api-version=2024-09-01";
-    public static int AZURE_CONTENT_SAFETY_RETRY_COUNT = 3;
+    public static String AZURE_CONTENT_SAFETY_CONTENT_MODERATION_ENDPOINT =
+            "/contentsafety/text:analyze?api-version=2024-09-01";
+    public static int AZURE_CONTENT_SAFETY_MAX_RETRY_COUNT = 3;
 }

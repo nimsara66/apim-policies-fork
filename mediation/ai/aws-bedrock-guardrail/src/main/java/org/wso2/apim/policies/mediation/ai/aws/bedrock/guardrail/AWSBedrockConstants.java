@@ -51,11 +51,11 @@ public class AWSBedrockConstants {
     public static String BEDROCK_GUARDRAIL_SIP = "sensitiveInformationPolicy";
     public static String BEDROCK_GUARDRAIL_PII_ENTITIES = "piiEntities";
     public static String BEDROCK_GUARDRAIL_PII_REGEXES = "regexes";
-    public static String BEDROCK_GUARDRAIL_PII_DETECTED = "detected";
+    public static String BEDROCK_GUARDRAIL_PII_ACTION = "action";
     public static String BEDROCK_GUARDRAIL_PII_MATCH = "match";
     public static String BEDROCK_GUARDRAIL_PII_TYPE = "type";
     public static String BEDROCK_GUARDRAIL_PII_NAME = "name";
-    public static int ERROR_CODE = 446;
+    public static int GUARDRAIL_ERROR_CODE = 446;
     public static String ERROR_TYPE = "ERROR_TYPE";
     public static String CUSTOM_HTTP_SC = "CUSTOM_HTTP_SC";
     public static String FAULT_SEQUENCE_KEY = "custom_fault";
@@ -65,4 +65,9 @@ public class AWSBedrockConstants {
     public static String ASSESSMENT_REASON = "actionReason";
     public static String INTERVENING_GUARDRAIL = "interveningGuardrail";
     public static String ASSESSMENTS = "assessments";
+
+    public static int GUARDRAIL_APIM_EXCEPTION_CODE = 900514;
+    public static int APIM_INTERNAL_EXCEPTION_CODE = 900967;
+    public static String AWS_BEDROCK_GUARDRAIL = "AWS_BEDROCK_GUARDRAIL";
+    public static int MAX_RETRY_COUNT = 3;
 }

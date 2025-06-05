@@ -46,10 +46,12 @@ import org.json.JSONObject;
 public class SentenceCountGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(SentenceCountGuardrail.class);
 
+    private String name;
     private int min;
     private int max;
     private String jsonPath = "";
     private boolean doInvert = false;
+    private boolean hideAssessment = false;
 
     /**
      * Initializes the SentenceCountGuardrail mediator.
@@ -59,7 +61,7 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
     @Override
     public void init(SynapseEnvironment synapseEnvironment) {
         if (logger.isDebugEnabled()) {
-            logger.debug("SentenceCountGuardrail: Initialized.");
+            logger.debug("Initializing SentenceCountGuardrail.");
         }
     }
 
@@ -84,27 +86,29 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("SentenceCountGuardrail: Beginning guardrail evaluation.");
+            logger.debug("Beginning guardrail evaluation.");
         }
 
         try {
-            boolean validationResult = validatePayload(messageContext);
+            int count = getSentenceCount(messageContext);
+            boolean validationResult = isCountWithinBounds(count);
             boolean finalResult = doInvert != validationResult;
 
             if (!finalResult) {
                 // Set error properties in message context
                 messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        SentenceCountGuardrailConstants.ERROR_CODE);
-                messageContext.setProperty(SentenceCountGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
+                        SentenceCountGuardrailConstants.GUARDRAIL_APIM_EXCEPTION_CODE);
+                messageContext.setProperty(SentenceCountGuardrailConstants.ERROR_TYPE,
+                        SentenceCountGuardrailConstants.SENTENCE_COUNT_GUARDRAIL);
                 messageContext.setProperty(SentenceCountGuardrailConstants.CUSTOM_HTTP_SC,
-                        SentenceCountGuardrailConstants.ERROR_CODE);
+                        SentenceCountGuardrailConstants.GUARDRAIL_ERROR_CODE);
 
                 // Build assessment details
-                String assessmentObject = buildAssessmentObject();
+                String assessmentObject = buildAssessmentObject(count, messageContext.isResponse());
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
 
                 if (logger.isDebugEnabled()) {
-                    logger.debug("SentenceCountGuardrail: Triggering fault sequence.");
+                    logger.debug("Triggering fault sequence.");
                 }
 
                 Mediator faultMediator = messageContext.getSequence(SentenceCountGuardrailConstants.FAULT_SEQUENCE_KEY);
@@ -112,25 +116,18 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
                 return false; // Stop further processing
             }
         } catch (Exception e) {
-            logger.error("SentenceCountGuardrail: Error during guardrail mediation.", e);
+            logger.error("Error during guardrail mediation.", e);
+
+            messageContext.setProperty(SynapseConstants.ERROR_CODE,
+                    SentenceCountGuardrailConstants.APIM_INTERNAL_EXCEPTION_CODE);
+            messageContext.setProperty(SynapseConstants.ERROR_MESSAGE,
+                    "Error occurred during SentenceCountGuardrail mediation");
+            Mediator faultMediator = messageContext.getFaultSequence();
+            faultMediator.mediate(messageContext);
+            return false; // Stop further processing
         }
 
         return true;
-    }
-
-    /**
-     * Validates the payload by counting sentences and checking if it falls within the allowed range.
-     *
-     * @param messageContext the current message context.
-     * @return true if the sentence count is within bounds, false otherwise.
-     */
-    private boolean validatePayload(MessageContext messageContext) {
-        if (logger.isDebugEnabled()) {
-            logger.debug("SentenceCountGuardrail: Validating payload sentence count.");
-        }
-
-        int count = getSentenceCount(messageContext);
-        return isCountWithinBounds(count);
     }
 
     /**
@@ -178,7 +175,7 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
     private int countSentences(String text) {
 
         if (logger.isDebugEnabled()) {
-            logger.debug("SentenceCountGuardrail: Counting sentences in extracted text.");
+            logger.debug("Counting sentences in extracted text.");
         }
 
         if (text == null || text.trim().isEmpty()) {
@@ -217,22 +214,37 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
      *
      * @return A JSON string containing assessment details and guardrail action information
      */
-    private String buildAssessmentObject() {
+    private String buildAssessmentObject(int count, boolean isResponse) {
         if (logger.isDebugEnabled()) {
-            logger.debug("SentenceCountGuardrail: Building guardrail assessment object.");
+            logger.debug("Building guardrail assessment object.");
         }
 
         JSONObject assessmentObject = new JSONObject();
 
         assessmentObject.put(SentenceCountGuardrailConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
-        assessmentObject.put(SentenceCountGuardrailConstants.ASSESSMENT_REASON, "Guardrail blocked.");
-        String message = String.format(
-                "Violation of sentence count detected: expected %s %d %s %d sentences.",
-                doInvert ? "less than" : "between", this.min, doInvert ? "or more than" : "and", this.max
-        );
-        assessmentObject.put(SentenceCountGuardrailConstants.ASSESSMENTS, message);
+        assessmentObject.put(SentenceCountGuardrailConstants.INTERVENING_GUARDRAIL, this.getName());
+        assessmentObject.put(SentenceCountGuardrailConstants.DIRECTION, isResponse? "RESPONSE" : "REQUEST");
+        assessmentObject.put(SentenceCountGuardrailConstants.ASSESSMENT_REASON,
+                "Violation of applied sentence count constraints detected.");
 
+        if (!this.hideAssessment) {
+            String message = String.format(
+                    "Violation of sentence count detected: expected %s %d %s %d sentences. But found %d sentences.",
+                    doInvert ? "less than" : "between", this.min, doInvert ? "or more than" : "and", this.max, count
+            );
+            assessmentObject.put(SentenceCountGuardrailConstants.ASSESSMENTS, message);
+        }
         return assessmentObject.toString();
+    }
+
+    public String getName() {
+
+        return name;
+    }
+
+    public void setName(String name) {
+
+        this.name = name;
     }
 
     public int getMin() {
@@ -273,5 +285,15 @@ public class SentenceCountGuardrail extends AbstractMediator implements ManagedL
     public void setDoInvert(boolean doInvert) {
 
         this.doInvert = doInvert;
+    }
+
+    public boolean isHideAssessment() {
+
+        return hideAssessment;
+    }
+
+    public void setHideAssessment(boolean hideAssessment) {
+
+        this.hideAssessment = hideAssessment;
     }
 }

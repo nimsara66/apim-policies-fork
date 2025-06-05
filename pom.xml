@@ -15,12 +15,15 @@
     <packaging>pom</packaging>
     <modules>
         <module>mediation</module>
+        <module>mediation/ai/pii-masking-guardrailsai</module>
     </modules>
 
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven-compiler-plugin.version>3.11.0</maven-compiler-plugin.version>
+        <org.apache.felix.version>3.3.0</org.apache.felix.version>
     </properties>
 
 </project>

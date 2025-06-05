@@ -26,6 +26,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
@@ -36,6 +37,7 @@ import org.apache.synapse.commons.json.JsonUtil;
 import org.apache.synapse.core.axis2.Axis2MessageContext;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
@@ -124,8 +126,8 @@ public class AWSBedrockUtils {
      * @throws Exception If an error occurs during the HTTP request execution, such as
      * network issues or invalid parameters.
      */
-    public static String makeBedrockRequest(
-            String url, String payload, Map<String, String> headers, Integer timeout) throws Exception {
+    public static String makeBedrockRequest(String url, String payload, Map<String, String> headers,
+                                            Integer timeout, boolean passthroughOnError) throws Exception {
 
         // Create request config with the specified timeout (in milliseconds)
         RequestConfig requestConfig = RequestConfig.custom()
@@ -134,44 +136,65 @@ public class AWSBedrockUtils {
                 .setConnectionRequestTimeout(timeout)
                 .build();
 
-        try (CloseableHttpClient httpClient = HttpClients.custom().setDefaultRequestConfig(requestConfig).build()) {
+        int statusCode = -1;
+        String responseBody = "";
 
-            HttpPost httpPost = new HttpPost(new URI(url));
+        for (int attempt = 1; attempt <= AWSBedrockConstants.MAX_RETRY_COUNT; attempt++) {
+            try (CloseableHttpClient httpClient = HttpClients.custom().setDefaultRequestConfig(requestConfig).build()) {
 
-            // Set headers
-            httpPost.setHeader(AWSBedrockConstants.CONTENT_TYPE_HEADER, "application/json");
-            for (Map.Entry<String, String> header : headers.entrySet()) {
-                httpPost.setHeader(header.getKey(), header.getValue());
-            }
+                HttpPost httpPost = new HttpPost(new URI(url));
 
-            // Set request body
-            StringEntity entity = new StringEntity(payload, StandardCharsets.UTF_8);
-            httpPost.setEntity(entity);
-
-            if (logger.isDebugEnabled()) {
-                logger.debug("Sending request to AWS Bedrock Guardrail");
-            }
-
-            // Execute the request
-            HttpResponse response = httpClient.execute(httpPost);
-
-            // Process response
-            HttpEntity responseEntity = response.getEntity();
-            String responseBody = EntityUtils.toString(responseEntity);
-
-            // Check response status
-            int statusCode = response.getStatusLine().getStatusCode();
-            if (statusCode >= 200 && statusCode < 300) {
-                if (logger.isDebugEnabled()) {
-                    logger.debug("Received successful response from AWS Bedrock Guardrail");
+                // Set headers
+                httpPost.setHeader(AWSBedrockConstants.CONTENT_TYPE_HEADER, "application/json");
+                for (Map.Entry<String, String> header : headers.entrySet()) {
+                    httpPost.setHeader(header.getKey(), header.getValue());
                 }
-                return responseBody;
-            } else {
-                logger.error("AWS Bedrock Guardrail request failed with status code: " + statusCode);
-                logger.error("Response: " + responseBody);
-                return null;
+
+                // Set request body
+                StringEntity entity = new StringEntity(payload, StandardCharsets.UTF_8);
+                httpPost.setEntity(entity);
+
+                if (logger.isDebugEnabled()) {
+                    logger.debug("Attempt " + attempt + ": Sending request to AWS Bedrock Guardrail");
+                }
+
+                try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
+                    statusCode = response.getStatusLine().getStatusCode();
+                    responseBody = EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
+
+                    if (statusCode == 200) {
+                        if (logger.isDebugEnabled()) {
+                            logger.debug("Received successful response from AWS Bedrock Guardrail");
+                        }
+                        return responseBody;
+                    } else {
+                        logger.warn(String.format("Attempt %d: Request failed with status code %d. Response: %s",
+                                attempt, statusCode, responseBody));
+                    }
+                }
+            } catch (IOException e) {
+                logger.warn(String.format("Attempt %d: Request error: %s", attempt, e.getMessage()));
+            }
+
+            // Exponential backoff
+            try {
+                long backoff = (long) Math.pow(2, attempt) * 1000L; // 2s, 4s, 8s, etc.
+                Thread.sleep(backoff);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted during backoff", ie);
             }
         }
+
+        // Should not reach here
+        if (!passthroughOnError) {
+            logger.error("Failed to validate content after maximum retry attempts.");
+            throw new IOException("Failed to get embedding after " +
+                    AWSBedrockConstants.MAX_RETRY_COUNT + " attempts");
+        }
+        logger.warn("Failed to validate content after maximum retry attempts, but continuing processing.");
+
+        return "";
     }
 
     /**

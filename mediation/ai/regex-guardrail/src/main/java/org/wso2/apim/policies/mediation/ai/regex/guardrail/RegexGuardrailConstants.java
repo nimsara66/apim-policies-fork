@@ -31,6 +31,7 @@ public class RegexGuardrailConstants {
     public static String REGEX_GUARDRAIL = "REGEX_GUARDRAIL";
     public static int APIM_INTERNAL_EXCEPTION_CODE = 900967;
     public static String ASSESSMENT_REASON = "actionReason";
+    public static String DIRECTION = "direction";
     public static String ASSESSMENTS = "assessments";
     public static String JSON_CLEAN_REGEX = "^\"|\"$";
 }

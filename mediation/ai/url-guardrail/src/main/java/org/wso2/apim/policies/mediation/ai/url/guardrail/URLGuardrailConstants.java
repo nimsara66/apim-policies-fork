@@ -31,6 +31,7 @@ public class URLGuardrailConstants {
     public static String ASSESSMENT_REASON = "actionReason";
     public static String ASSESSMENTS = "assessments";
     public static String INTERVENING_GUARDRAIL = "interveningGuardrail";
+    public static String DIRECTION = "direction";
     public static String URL_GUARDRAIL = "URL_GUARDRAIL";
     public static String URL_REGEX = "https?://[^\\s,\"'{}\\[\\]\\\\]+";
 }

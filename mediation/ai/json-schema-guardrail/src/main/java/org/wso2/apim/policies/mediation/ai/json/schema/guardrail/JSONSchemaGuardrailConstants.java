@@ -21,13 +21,19 @@
 package org.wso2.apim.policies.mediation.ai.json.schema.guardrail;
 
 public class JSONSchemaGuardrailConstants {
-    public static int ERROR_CODE = 446;
+    public static int GUARDRAIL_ERROR_CODE = 446;
+    public static int APIM_INTERNAL_EXCEPTION_CODE = 900967;
+    public static int GUARDRAIL_APIM_EXCEPTION_CODE = 900514;
     public static String ERROR_TYPE = "ERROR_TYPE";
+    public static String JSON_SCHEMA_GUARDRAIL = "JSON_SCHEMA_GUARDRAIL";
     public static String CUSTOM_HTTP_SC = "CUSTOM_HTTP_SC";
     public static String FAULT_SEQUENCE_KEY = "custom_fault";
     public static final String JSON_CONTENT_REGEX = "\\{.*?\\}";
+    public static String TEXT_CLEAN_REGEX = "^\"|\"$";
 
     public static String ASSESSMENT_ACTION = "action";
+    public static String INTERVENING_GUARDRAIL = "interveningGuardrail";
+    public static String DIRECTION = "direction";
     public static String ASSESSMENT_REASON = "actionReason";
     public static String ASSESSMENTS = "assessments";
 }

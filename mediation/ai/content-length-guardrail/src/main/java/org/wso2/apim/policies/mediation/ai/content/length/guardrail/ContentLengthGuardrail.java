@@ -84,7 +84,7 @@ public class ContentLengthGuardrail extends AbstractMediator implements ManagedL
     @Override
     public void init(SynapseEnvironment synapseEnvironment) {
         if (logger.isDebugEnabled()) {
-            logger.debug("ContentLengthGuardrail: Initialized.");
+            logger.debug("Initializing ContentLengthGuardrail.");
         }
     }
 
@@ -108,11 +108,12 @@ public class ContentLengthGuardrail extends AbstractMediator implements ManagedL
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("ContentLengthGuardrail: Starting mediation.");
+            logger.debug("Starting mediation.");
         }
 
         try {
-            boolean validationResult = validatePayload(messageContext);
+            int count = getCharacterCount(messageContext);
+            boolean validationResult = isCountWithinBounds(count);
             boolean finalResult = doInvert != validationResult;
 
             if (!finalResult) {
@@ -125,11 +126,11 @@ public class ContentLengthGuardrail extends AbstractMediator implements ManagedL
                         ContentLengthGuardrailConstants.GUARDRAIL_ERROR_CODE);
 
                 // Build assessment details
-                String assessmentObject = buildAssessmentObject();
+                String assessmentObject = buildAssessmentObject(count);
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
 
                 if (logger.isDebugEnabled()) {
-                    logger.debug("ContentLengthGuardrail: Validation failed - triggering fault sequence.");
+                    logger.debug("Validation failed - triggering fault sequence.");
                 }
 
                 Mediator faultMediator = messageContext.getSequence(ContentLengthGuardrailConstants.FAULT_SEQUENCE_KEY);
@@ -137,7 +138,7 @@ public class ContentLengthGuardrail extends AbstractMediator implements ManagedL
                 return false; // Stop further processing
             }
         } catch (Exception e) {
-            logger.error("ContentLengthGuardrail: Error during mediation", e);
+            logger.error("Error during mediation", e);
 
             messageContext.setProperty(SynapseConstants.ERROR_CODE,
                     ContentLengthGuardrailConstants.APIM_INTERNAL_EXCEPTION_CODE);
@@ -145,10 +146,20 @@ public class ContentLengthGuardrail extends AbstractMediator implements ManagedL
                     "Error occurred during ContentLengthGuardrail mediation");
             Mediator faultMediator = messageContext.getFaultSequence();
             faultMediator.mediate(messageContext);
-            return false;
+            return false; // Stop further processing
         }
 
         return true;
+    }
+
+    /**
+     * Checks whether the given character count is within the configured minimum and maximum bounds.
+     *
+     * @param count The number of words to evaluate.
+     * @return {@code true} if the word count is within bounds; {@code false} otherwise.
+     */
+    private boolean isCountWithinBounds(int count) {
+        return this.min <= count && this.max >= count;
     }
 
     /**
@@ -158,19 +169,15 @@ public class ContentLengthGuardrail extends AbstractMediator implements ManagedL
      * @return {@code true} if the byte length of the input is between {@code min} and {@code max} (inclusive),
      * {@code false} otherwise.
      */
-    private boolean validatePayload(MessageContext messageContext) {
-        if (logger.isDebugEnabled()) {
-            logger.debug("ContentLengthGuardrail: Validating payload.");
-        }
-
+    private int getCharacterCount(MessageContext messageContext) {
         String jsonContent = extractJsonContent(messageContext);
         if (jsonContent == null || jsonContent.isEmpty()) {
-            return isCountWithinBounds("");
+            return countCharacters("");
         }
 
         // If no JSON path is specified, apply validation to the entire JSON content
         if (this.jsonPath == null || this.jsonPath.trim().isEmpty()) {
-            return isCountWithinBounds(jsonContent);
+            return countCharacters(jsonContent);
         }
 
         String content = JsonPath.read(jsonContent, this.jsonPath).toString();
@@ -178,27 +185,24 @@ public class ContentLengthGuardrail extends AbstractMediator implements ManagedL
         // Remove quotes at beginning and end
         String cleanedText = content.replaceAll(ContentLengthGuardrailConstants.JSON_CLEAN_REGEX, "").trim();
 
-        return isCountWithinBounds(cleanedText);
+        return countCharacters(cleanedText);
     }
 
     /**
-     * Validates whether the UTF-8 encoded byte length of the provided input string
-     * is within the configured minimum and maximum content length bounds.
+     * Counts the number of characters in a given text.
+     * <p>
+     * Words are separated by whitespace. Quotes at the beginning and end of the text are removed
+     * before counting.
      *
-     * <p>This method is typically used to enforce HTTP content length restrictions
-     * based on the number of bytes the input would consume in transmission.</p>
-     *
-     * @param input The string input to evaluate.
-     * @return {@code true} if the byte length of the input is between {@code min} and {@code max} (inclusive),
-     * {@code false} otherwise.
+     * @param text The text to analyze.
+     * @return The number of characters found.
      */
-    private boolean isCountWithinBounds(String input) {
+    private int countCharacters(String text) {
         if (logger.isDebugEnabled()) {
-            logger.debug("ContentLengthGuardrail: Validating extracted content.");
+            logger.debug("Counting characters in extracted text.");
         }
 
-        int byteLength = input.getBytes(StandardCharsets.UTF_8).length;
-        return (byteLength >= min && byteLength <= max);
+        return text.getBytes(StandardCharsets.UTF_8).length;
     }
 
     /**
@@ -220,9 +224,9 @@ public class ContentLengthGuardrail extends AbstractMediator implements ManagedL
      *
      * @return A JSON string representing the assessment object
      */
-    private String buildAssessmentObject() {
+    private String buildAssessmentObject(int count) {
         if (logger.isDebugEnabled()) {
-            logger.debug("ContentLengthGuardrail: Building assessment");
+            logger.debug("Building assessment");
         }
 
         JSONObject assessmentObject = new JSONObject();
@@ -234,13 +238,14 @@ public class ContentLengthGuardrail extends AbstractMediator implements ManagedL
 
         if (this.buildAssessment) {
             String message = String.format(
-                    "Expected %s %d %s %d bytes.",
+                    "Expected %s %d %s %d bytes. But found %d words.",
                     this.doInvert
                             ? "less than"
                             : "between", this.min,
                     this.doInvert
                             ? "or more than"
                             : "and", this.max
+                    , count
             );
 
             assessmentObject.put(ContentLengthGuardrailConstants.ASSESSMENTS, message);

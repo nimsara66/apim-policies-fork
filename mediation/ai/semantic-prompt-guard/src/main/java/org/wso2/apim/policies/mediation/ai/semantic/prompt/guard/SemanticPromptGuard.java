@@ -25,9 +25,6 @@ import com.google.gson.reflect.TypeToken;
 import com.jayway.jsonpath.JsonPath;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.http.client.config.RequestConfig;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
 import org.apache.synapse.ManagedLifecycle;
 import org.apache.synapse.Mediator;
 import org.apache.synapse.MessageContext;
@@ -39,6 +36,8 @@ import org.apache.synapse.mediators.AbstractMediator;
 import org.ejml.simple.SimpleMatrix;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.wso2.carbon.apimgt.impl.APIManagerConfiguration;
+import org.wso2.carbon.apimgt.impl.internal.ServiceReferenceHolder;
 
 import java.io.IOException;
 import java.lang.reflect.Type;
@@ -47,43 +46,64 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
+import java.util.ServiceLoader;
 import java.util.regex.PatternSyntaxException;
 
 /**
- * Regex Guardrail mediator.
+ * Semantic Prompt Guard mediator.
  * <p>
- * A mediator that performs piiEntities-based validation on payloads according to specified patterns.
- * This guardrail can be configured with JSON path expressions to target specific parts of JSON payloads
- * and apply piiEntities pattern validation against them. The validation result can be inverted if needed.
+ * A Synapse mediator that performs semantic validation of message payloads using vector similarity against
+ * pre-configured "allow" and "deny" prompt rules. This guardrail is designed to provide intelligent content 
+ * moderation using embedding-based similarity scores rather than static pattern matching.
  * <p>
- * When validation fails, the mediator triggers a fault sequence and enriches the message context
- * with appropriate error details.
+ * The rules are configured as JSON containing lists of "allowPrompts" and/or "denyPrompts". Each prompt is
+ * embedded using a pluggable {@link EmbeddingProvider}, and incoming payloads (optionally extracted via a JSONPath)
+ * are compared against these embeddings to determine compliance.
+ * <p>
+ * Supported providers include OpenAI, Mistral, Azure OpenAI, and others registered via SPI. Threshold-based 
+ * cosine similarity is used to evaluate rule matches. If a rule match is found, the mediator can:
+ * <ul>
+ *   <li>Allow or deny processing based on match type</li>
+ *   <li>Build an assessment object summarizing the violation or decision</li>
+ *   <li>Trigger a fault sequence with enriched error context</li>
+ * </ul>
+ * This is useful for applications such as prompt injection prevention, LLM content control, or semantic compliance checks.
+ *
+ * <p>
+ * Configurable parameters include:
+ * <ul>
+ *   <li>{@code threshold} - Minimum similarity (in percentage) to consider a match</li>
+ *   <li>{@code embeddingProviderType} - The type of embedding provider to use</li>
+ *   <li>{@code jsonPath} - (Optional) JSON path to extract content from the payload</li>
+ *   <li>{@code timeout}, {@code embeddingDimensions}, API keys, and endpoint URLs for supported providers</li>
+ * </ul>
+ *
+ * When validation fails, this mediator halts further processing, triggers a fault sequence, and updates the
+ * {@link org.apache.synapse.MessageContext} with detailed error metadata.
+ *
+ * Example use cases:
+ * <ul>
+ *   <li>Guarding AI model endpoints from malicious or out-of-scope prompts</li>
+ *   <li>Enforcing semantic guardrails on incoming API payloads</li>
+ *   <li>Allow/deny filtering based on semantic meaning rather than keywords</li>
+ * </ul>
+ *
+ * @see EmbeddingProvider
+ * @see SemanticPromptGuardConstants
  */
 public class SemanticPromptGuard extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(SemanticPromptGuard.class);
+    private static final APIManagerConfiguration apimConfig =
+            ServiceReferenceHolder.getInstance().getAPIManagerConfigurationService()
+                    .getAPIManagerConfiguration();
 
     private String name;
     private String rules;
     private String jsonPath = "";
-    private boolean buildAssessment = true;
+    private boolean hideAssessment = false;
+    private double threshold = 90;
 
-    // Embedding provider configuration
-    private double threshold = 80;
-    private String embeddingProviderType;
-    private int embeddingDimensions = 1024;
-    private int timeout = 6000;
-
-    // Embedding provider security
-    private String openaiApiKey;
-    private String openaiEmbeddingEndpoint;
-    private String openaiEmbeddingModel;
-    private String mistralApiKey;
-    private String mistralEmbeddingEndpoint;
-    private String mistralEmbeddingModel;
-    private String azureOpenaiApiKey;
-    private String azureOpenaiEmbeddingEndpoint;
-
+    private int embeddingDimension;
     private SimpleMatrix ruleEmbeddings;
     private List<SemanticPromptGuardConstants.PromptType> ruleTypes;
     private List<String> ruleContent;
@@ -98,10 +118,15 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
     @Override
     public void init(SynapseEnvironment synapseEnvironment) {
         this.embeddingProvider = createEmbeddingProvider();
+        try {
+            this.embeddingDimension = this.embeddingProvider.getEmbeddingDimension();
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to get embedding dimension for provider: " + this.embeddingProvider, e);
+        }
         processRules(rules);
 
         if (logger.isDebugEnabled()) {
-            logger.debug("SemanticPromptGuard: Initialized.");
+            logger.debug("Initializing SemanticPromptGuard.");
         }
     }
 
@@ -116,7 +141,7 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
 
             int totalPrompts = allowPrompts.size() + denyPrompts.size();
 
-            this.ruleEmbeddings = new SimpleMatrix(totalPrompts, this.embeddingDimensions);
+            this.ruleEmbeddings = new SimpleMatrix(totalPrompts, this.embeddingDimension);
             this.ruleTypes = new ArrayList<>(totalPrompts);
             this.ruleContent = new ArrayList<>();
 
@@ -125,9 +150,9 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
             // Batch embed deny prompts
             if (!denyPrompts.isEmpty()) {
                 this.processingMode = SemanticPromptGuardConstants.RuleProcessingMode.DENY_ONLY;
-                List<float[]> denyEmbeddings = this.embeddingProvider.getEmbeddings(denyPrompts);
-                for (int i = 0; i < denyPrompts.size(); i++) {
-                    storePrompt(row, denyEmbeddings.get(i), SemanticPromptGuardConstants.PromptType.DENY, denyPrompts.get(i));
+                for (String denyPrompt : denyPrompts) {
+                    float[] denyPromptEmbedding = this.embeddingProvider.getEmbedding(denyPrompt);
+                    storePrompt(row, denyPromptEmbedding, SemanticPromptGuardConstants.PromptType.DENY, denyPrompt);
                     row++;
                 }
             }
@@ -140,62 +165,43 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
                     this.processingMode = SemanticPromptGuardConstants.RuleProcessingMode.HYBRID;
                 }
 
-                List<float[]> allowEmbeddings = this.embeddingProvider.getEmbeddings(allowPrompts);
-                for (int i = 0; i < allowPrompts.size(); i++) {
-                    storePrompt(row, allowEmbeddings.get(i), SemanticPromptGuardConstants.PromptType.ALLOW, allowPrompts.get(i));
+                for (String allowPrompt : allowPrompts) {
+                    float[] allowPromptEmbedding = this.embeddingProvider.getEmbedding(allowPrompt);
+                    storePrompt(row, allowPromptEmbedding, SemanticPromptGuardConstants.PromptType.ALLOW, allowPrompt);
                     row++;
                 }
             }
 
             if (logger.isDebugEnabled()) {
-                logger.debug("SemanticPromptGuard: Rules added successfully: " + rules);
+                logger.debug("Rules added successfully: " + rules);
             }
 
         } catch (PatternSyntaxException | IOException e) {
-            throw new RuntimeException("SemanticPromptGuard: Invalid rules: " + rules, e);
+            throw new RuntimeException("Invalid rules: " + rules, e);
         }
     }
 
     private EmbeddingProvider createEmbeddingProvider() {
-        RequestConfig requestConfig = RequestConfig.custom()
-                .setConnectTimeout(this.timeout)
-                .setConnectionRequestTimeout(this.timeout)
-                .setSocketTimeout(this.timeout)
-                .build();
+        Map<String, Map<String, String>> providers = apimConfig.getEmbeddingProviders();
 
-        CloseableHttpClient httpClient = HttpClients.custom()
-                .setDefaultRequestConfig(requestConfig)
-                .build();
-
-        EmbeddingProviderType type = EmbeddingProviderType.fromString(this.embeddingProviderType);
-
-        switch (type) {
-            case MISTRAL:
-                return new MistralEmbeddingProvider(
-                        httpClient,
-                        this.mistralApiKey,
-                        this.mistralEmbeddingEndpoint,
-                        this.mistralEmbeddingModel
-                );
-
-            case OPENAI:
-                return new OpenAIEmbeddingProvider(
-                        httpClient,
-                        this.openaiApiKey,
-                        this.openaiEmbeddingEndpoint,
-                        this.openaiEmbeddingModel
-                );
-
-            case AZURE_OPENAI:
-                return new AzureOpenAIEmbeddingProvider(
-                        httpClient,
-                        this.azureOpenaiApiKey,
-                        this.azureOpenaiEmbeddingEndpoint
-                );
-
-            default:
-                throw new IllegalArgumentException("Unsupported provider: " + this.embeddingProviderType);
+        if (providers.isEmpty()) {
+            throw new IllegalArgumentException("No embedding providers configured in API Manager.");
         }
+
+        Map.Entry<String, Map<String, String>> providerEntry =
+                apimConfig.getEmbeddingProviders().entrySet().iterator().next();
+        Map<String, String> providerConfig = providerEntry.getValue();
+
+        // Load via ServiceLoader
+        ServiceLoader<EmbeddingProvider> loader = ServiceLoader.load(EmbeddingProvider.class);
+        for (EmbeddingProvider provider : loader) {
+            if (provider.getType().equalsIgnoreCase(providerEntry.getKey())) {
+                provider.init(providerConfig);
+                return provider;
+            }
+        }
+
+        throw new IllegalArgumentException("Unsupported or unregistered provider: " + providerEntry.getKey());
     }
 
     /**
@@ -204,13 +210,13 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
     @Override
     public void destroy() {
         // No specific resources to release
-        System.out.println("SemanticPromptGuard: Destroyed.");
+        System.out.println("Destroyed.");
     }
 
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("SemanticPromptGuard: Beginning payload validation.");
+            logger.debug("Beginning payload validation.");
         }
 
         try {
@@ -230,7 +236,7 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
 
                 if (logger.isDebugEnabled()) {
-                    logger.debug("SemanticPromptGuard: Validation failed - triggering fault sequence.");
+                    logger.debug("Validation failed - triggering fault sequence.");
                 }
 
                 Mediator faultMediator = messageContext.getSequence(SemanticPromptGuardConstants.FAULT_SEQUENCE_KEY);
@@ -238,7 +244,7 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
                 return false; // Stop further processing
             }
         } catch (Exception e) {
-            logger.error("SemanticPromptGuard: Exception occurred during mediation.", e);
+            logger.error("Exception occurred during mediation.", e);
 
             messageContext.setProperty(SynapseConstants.ERROR_CODE,
                     SemanticPromptGuardConstants.APIM_INTERNAL_EXCEPTION_CODE);
@@ -262,7 +268,7 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
      */
     private boolean applyRules(MessageContext messageContext) throws IOException {
         if (logger.isDebugEnabled()) {
-            logger.debug("SemanticPromptGuard: Applying rules.");
+            logger.debug("Applying rules.");
         }
 
         String jsonContent = extractJsonContent(messageContext);
@@ -314,7 +320,7 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
     }
 
     private float[] calculateSimilarity(String prompt) throws IOException {
-        float[] vector = generateEmbedding(prompt);
+        float[] vector = this.embeddingProvider.getEmbedding(prompt);
 
         // Step 1: Convert the input vector to a SimpleMatrix
         SimpleMatrix query = new SimpleMatrix(1, vector.length);
@@ -322,7 +328,7 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
             query.set(0, i, vector[i]);
         }
 
-        // Step 2: Calculate the dot products (s = V * q)
+        // Step 2: Calculate the dot products (s = V * q)“
         SimpleMatrix s = ruleEmbeddings.mult(query.transpose());
 
         // Step 3: Compute the norm of the query vector
@@ -348,16 +354,18 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
 
     private String buildAssessmentObject(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("SemanticPromptGuard: Creating assessment");
+            logger.debug("Building guardrail assessment object.");
         }
 
         JSONObject assessmentObject = new JSONObject();
 
         assessmentObject.put(SemanticPromptGuardConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
         assessmentObject.put(SemanticPromptGuardConstants.INTERVENING_GUARDRAIL, this.getName());
+        assessmentObject.put(SemanticPromptGuardConstants.DIRECTION,
+                messageContext.isResponse()? "RESPONSE" : "REQUEST");
         assessmentObject.put(SemanticPromptGuardConstants.ASSESSMENT_REASON, "Violation of guard prompts detected.");
 
-        if (this.buildAssessment) {
+        if (!this.hideAssessment) {
             JSONObject assessmentDetails = new JSONObject();
             if (this.processingMode == SemanticPromptGuardConstants.RuleProcessingMode.DENY_ONLY) {
                 assessmentDetails.put("message", "One or more semantic rules are violated.");
@@ -394,32 +402,14 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
         return JsonUtil.jsonPayloadToString(axis2MC);
     }
 
-    // Helper to generate a random embedding vector (float32 values)
-    private float[] generateRandomEmbedding() {
-        Random random = new Random();
-        float[] embedding = new float[this.embeddingDimensions];
-        for (int i = 0; i < this.embeddingDimensions; i++) {
-            embedding[i] = random.nextFloat(); // Or use fixed value if preferred
-        }
-        return embedding;
-    }
-
-    private float[] generateEmbedding(String input) throws IOException {
-        if (logger.isDebugEnabled()) {
-            logger.debug("SemanticPromptGuard: " + this.embeddingProvider + " generating embedding for: " + input);
-        }
-
-        return this.embeddingProvider.getEmbedding(input);
-    }
-
     // Helper method to store the prompt and its data
     private void storePrompt(int row, float[] embedding, SemanticPromptGuardConstants.PromptType type, String prompt) {
         if (logger.isDebugEnabled()) {
-            logger.debug("SemanticPromptGuard: Storing embedding: " + Arrays.toString(embedding) +
+            logger.debug("Storing embedding: " + Arrays.toString(embedding) +
                     " | Prompt: \"" + prompt + "\"");
         }
 
-        for (int col = 0; col < this.embeddingDimensions; col++) {
+        for (int col = 0; col < this.embeddingDimension; col++) {
             ruleEmbeddings.set(row, col, embedding[col]);
         }
         ruleTypes.add(type);
@@ -456,14 +446,14 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
         this.jsonPath = jsonPath;
     }
 
-    public boolean isBuildAssessment() {
+    public boolean isHideAssessment() {
 
-        return buildAssessment;
+        return hideAssessment;
     }
 
-    public void setBuildAssessment(boolean buildAssessment) {
+    public void setHideAssessment(boolean hideAssessment) {
 
-        this.buildAssessment = buildAssessment;
+        this.hideAssessment = hideAssessment;
     }
 
     public double getThreshold() {
@@ -474,115 +464,5 @@ public class SemanticPromptGuard extends AbstractMediator implements ManagedLife
     public void setThreshold(double threshold) {
 
         this.threshold = threshold;
-    }
-
-    public String getEmbeddingProviderType() {
-
-        return embeddingProviderType;
-    }
-
-    public void setEmbeddingProviderType(String providerType) {
-
-        this.embeddingProviderType = providerType;
-    }
-
-    public int getEmbeddingDimensions() {
-
-        return embeddingDimensions;
-    }
-
-    public void setEmbeddingDimensions(int embeddingDimensions) {
-
-        this.embeddingDimensions = embeddingDimensions;
-    }
-
-    public int getTimeout() {
-
-        return timeout;
-    }
-
-    public void setTimeout(int timeout) {
-
-        this.timeout = timeout;
-    }
-
-    public String getOpenaiApiKey() {
-
-        return openaiApiKey;
-    }
-
-    public void setOpenaiApiKey(String openaiApiKey) {
-
-        this.openaiApiKey = openaiApiKey;
-    }
-
-    public String getOpenaiEmbeddingEndpoint() {
-
-        return openaiEmbeddingEndpoint;
-    }
-
-    public void setOpenaiEmbeddingEndpoint(String openaiEmbeddingEndpoint) {
-
-        this.openaiEmbeddingEndpoint = openaiEmbeddingEndpoint;
-    }
-
-    public String getOpenaiEmbeddingModel() {
-
-        return openaiEmbeddingModel;
-    }
-
-    public void setOpenaiEmbeddingModel(String openaiEmbeddingModel) {
-
-        this.openaiEmbeddingModel = openaiEmbeddingModel;
-    }
-
-    public String getMistralApiKey() {
-
-        return mistralApiKey;
-    }
-
-    public void setMistralApiKey(String mistralApiKey) {
-
-        this.mistralApiKey = mistralApiKey;
-    }
-
-    public String getMistralEmbeddingEndpoint() {
-
-        return mistralEmbeddingEndpoint;
-    }
-
-    public void setMistralEmbeddingEndpoint(String mistralEmbeddingEndpoint) {
-
-        this.mistralEmbeddingEndpoint = mistralEmbeddingEndpoint;
-    }
-
-    public String getMistralEmbeddingModel() {
-
-        return mistralEmbeddingModel;
-    }
-
-    public void setMistralEmbeddingModel(String mistralEmbeddingModel) {
-
-        this.mistralEmbeddingModel = mistralEmbeddingModel;
-    }
-
-    public String getAzureOpenaiApiKey() {
-
-        return azureOpenaiApiKey;
-    }
-
-    public void setAzureOpenaiApiKey(String azureOpenaiApiKey) {
-
-        this.azureOpenaiApiKey = azureOpenaiApiKey;
-    }
-
-    public String getAzureOpenaiEmbeddingEndpoint() {
-
-        return azureOpenaiEmbeddingEndpoint;
-    }
-
-    public void setAzureOpenaiEmbeddingEndpoint(String azureOpenaiEmbeddingEndpoint) {
-
-        this.azureOpenaiEmbeddingEndpoint = azureOpenaiEmbeddingEndpoint;
     }
 }

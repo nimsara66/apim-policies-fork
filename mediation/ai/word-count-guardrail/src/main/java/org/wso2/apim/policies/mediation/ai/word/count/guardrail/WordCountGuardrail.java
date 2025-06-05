@@ -47,10 +47,12 @@ import org.json.JSONObject;
 public class WordCountGuardrail extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(WordCountGuardrail.class);
 
+    private String name;
     private int min;
     private int max;
     private String jsonPath = "";
     private boolean doInvert = false;
+    private boolean hideAssessment = false;
 
     /**
      * Initializes the WordCountGuardrail mediator.
@@ -60,7 +62,7 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
     @Override
     public void init(SynapseEnvironment synapseEnvironment) {
         if (logger.isDebugEnabled()) {
-            logger.debug("WordCountGuardrail: Initialized.");
+            logger.debug("Initializing WordCountGuardrail.");
         }
     }
 
@@ -85,27 +87,29 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("WordCountGuardrail: Beginning guardrail evaluation.");
+            logger.debug("Beginning guardrail evaluation.");
         }
 
         try {
-            boolean validationResult = validatePayload(messageContext);
+            int count = getWordCount(messageContext);
+            boolean validationResult = isCountWithinBounds(count);
             boolean finalResult = doInvert != validationResult;
 
             if (!finalResult) {
                 // Set error properties in message context
                 messageContext.setProperty(SynapseConstants.ERROR_CODE,
-                        WordCountGuardrailConstants.ERROR_CODE);
-                messageContext.setProperty(WordCountGuardrailConstants.ERROR_TYPE, "Guardrail Blocked");
+                        WordCountGuardrailConstants.GUARDRAIL_APIM_EXCEPTION_CODE);
+                messageContext.setProperty(WordCountGuardrailConstants.ERROR_TYPE,
+                        WordCountGuardrailConstants.WORD_COUNT_GUARDRAIL);
                 messageContext.setProperty(WordCountGuardrailConstants.CUSTOM_HTTP_SC,
-                        WordCountGuardrailConstants.ERROR_CODE);
+                        WordCountGuardrailConstants.GUARDRAIL_ERROR_CODE);
 
                 // Build assessment details
-                String assessmentObject = buildAssessmentObject();
+                String assessmentObject = buildAssessmentObject(count, messageContext.isResponse());
                 messageContext.setProperty(SynapseConstants.ERROR_MESSAGE, assessmentObject);
 
                 if (logger.isDebugEnabled()) {
-                    logger.debug("WordCountGuardrail: Triggering fault sequence.");
+                    logger.debug("Triggering fault sequence.");
                 }
 
                 Mediator faultMediator = messageContext.getSequence(WordCountGuardrailConstants.FAULT_SEQUENCE_KEY);
@@ -113,25 +117,18 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
                 return false; // Stop further processing
             }
         } catch (Exception e) {
-            logger.error("WordCountGuardrail: Error during guardrail mediation.", e);
+            logger.error("Error during guardrail mediation.", e);
+
+            messageContext.setProperty(SynapseConstants.ERROR_CODE,
+                    WordCountGuardrailConstants.APIM_INTERNAL_EXCEPTION_CODE);
+            messageContext.setProperty(SynapseConstants.ERROR_MESSAGE,
+                    "Error occurred during WordCountGuardrail mediation");
+            Mediator faultMediator = messageContext.getFaultSequence();
+            faultMediator.mediate(messageContext);
+            return false; // Stop further processing
         }
 
         return true;
-    }
-
-    /**
-     * Validates whether the word count of the extracted payload falls within the configured bounds.
-     *
-     * @param messageContext The message context containing the payload.
-     * @return {@code true} if the payload satisfies the word count constraints; {@code false} otherwise.
-     */
-    private boolean validatePayload(MessageContext messageContext) {
-        if (logger.isDebugEnabled()) {
-            logger.debug("WordCountGuardrail: Validating payload word count.");
-        }
-
-        int count = getWordCount(messageContext);
-        return isCountWithinBounds(count);
     }
 
     /**
@@ -177,7 +174,7 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
     private int countWords(String text) {
 
         if (logger.isDebugEnabled()) {
-            logger.debug("WordCountGuardrail: Counting words in extracted text.");
+            logger.debug("Counting words in extracted text.");
         }
 
         if (text == null || text.trim().isEmpty()) {
@@ -217,22 +214,37 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
      *
      * @return A JSON string representing the assessment object
      */
-    private String buildAssessmentObject() {
+    private String buildAssessmentObject(int count, boolean isResponse) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Regex Guardrail assessment creation");
+            logger.debug("Building guardrail assessment object.");
         }
 
         JSONObject assessmentObject = new JSONObject();
 
         assessmentObject.put(WordCountGuardrailConstants.ASSESSMENT_ACTION, "GUARDRAIL_INTERVENED");
-        assessmentObject.put(WordCountGuardrailConstants.ASSESSMENT_REASON, "Guardrail blocked.");
-        String message = String.format(
-                "Violation of word count detected: expected %s %d %s %d words.",
-                doInvert ? "less than" : "between", this.min, doInvert ? "or more than" : "and", this.max
-        );
-        assessmentObject.put(WordCountGuardrailConstants.ASSESSMENTS, message);
+        assessmentObject.put(WordCountGuardrailConstants.INTERVENING_GUARDRAIL, this.getName());
+        assessmentObject.put(WordCountGuardrailConstants.DIRECTION, isResponse? "RESPONSE" : "REQUEST");
+        assessmentObject.put(WordCountGuardrailConstants.ASSESSMENT_REASON,
+                "Violation of applied word count constraints detected.");
 
+        if (!this.hideAssessment) {
+            String message = String.format(
+                    "Violation of word count detected. Expected %s %d %s %d words. But found %d words.",
+                    doInvert ? "less than" : "between", this.min, doInvert ? "or more than" : "and", this.max, count
+            );
+            assessmentObject.put(WordCountGuardrailConstants.ASSESSMENTS, message);
+        }
         return assessmentObject.toString();
+    }
+
+    public String getName() {
+
+        return name;
+    }
+
+    public void setName(String name) {
+
+        this.name = name;
     }
 
     public int getMin() {
@@ -273,5 +285,15 @@ public class WordCountGuardrail extends AbstractMediator implements ManagedLifec
     public void setDoInvert(boolean doInvert) {
 
         this.doInvert = doInvert;
+    }
+
+    public boolean isHideAssessment() {
+
+        return hideAssessment;
+    }
+
+    public void setHideAssessment(boolean hideAssessment) {
+
+        this.hideAssessment = hideAssessment;
     }
 }

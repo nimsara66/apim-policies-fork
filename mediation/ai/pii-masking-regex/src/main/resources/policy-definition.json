@@ -1,0 +1,56 @@
+{
+  "category": "Mediation",
+  "name": "PIIMaskingRegex",
+  "version": "v1.0",
+  "displayName": "PII Masking with Regex",
+  "description": "Detects and masks Personally Identifiable Information (PII) based on a specified regular expression pattern. By default, PII values are masked during the request flow and restored in the response flow.",
+  "applicableFlows": [
+    "request",
+    "response"
+  ],
+  "supportedGateways": [
+    "Synapse"
+  ],
+  "supportedApiTypes": [
+    {
+      "subType": "AIAPI",
+      "apiType": "HTTP"
+    }
+  ],
+  "policyAttributes": [
+    {
+      "name": "name",
+      "displayName": "Guardrail Name",
+      "description": "The name of the guardrail policy. This will be used for tracking purposes.",
+      "type": "String",
+      "allowedValues": [],
+      "required": true
+    },
+    {
+      "name": "piiEntities",
+      "displayName": "PII Entities",
+      "description": "The PII entities to detect and mask using regular expressions. Each entry should include the entity name and its corresponding regex pattern.",
+      "type": "JSON",
+      "defaultValue": "[\n  {\n    \"piiEntity\": \"\",\n    \"piiRegex\": \"\"\n  }\n]",
+      "allowedValues": [],
+      "required": true
+    },
+    {
+      "name": "jsonPath",
+      "displayName": "JSON Path",
+      "description": "The JSONPath expression used to extract content from the payload. If not specified, the entire payload will be used for validation.",
+      "type": "String",
+      "allowedValues": [],
+      "required": false
+    },
+    {
+      "name": "redact",
+      "displayName": "Redact PII",
+      "description": "If set to true, identified PII values will be permanently replaced with \"*****\" (irreversible).",
+      "type": "Boolean",
+      "allowedValues": [],
+      "defaultValue": "false",
+      "required": false
+    }
+  ]
+}

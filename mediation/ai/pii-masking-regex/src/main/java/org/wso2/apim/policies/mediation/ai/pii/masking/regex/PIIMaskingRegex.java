@@ -28,7 +28,9 @@ import org.apache.axis2.AxisFault;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.synapse.ManagedLifecycle;
+import org.apache.synapse.Mediator;
 import org.apache.synapse.MessageContext;
+import org.apache.synapse.SynapseConstants;
 import org.apache.synapse.commons.json.JsonUtil;
 import org.apache.synapse.core.SynapseEnvironment;
 import org.apache.synapse.core.axis2.Axis2MessageContext;
@@ -40,19 +42,33 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 /**
- * Regex Guardrail mediator.
+ * PII Masking/Redaction Mediator.
  * <p>
- * A mediator that performs piiEntities-based validation on payloads according to specified patterns.
- * This guardrail can be configured with JSON path expressions to target specific parts of JSON payloads
- * and apply piiEntities pattern validation against them. The validation result can be inverted if needed.
+ * A Synapse custom mediator that detects and processes Personally Identifiable Information (PII) in
+ * JSON payloads using regex patterns. This mediator can either mask PII by replacing detected values
+ * with placeholders (e.g., &lt;Email_1&gt;) or redact them by replacing matches with fixed strings (e.g., *****).
  * <p>
- * When validation fails, the mediator triggers a fault sequence and enriches the message context
- * with appropriate error details.
+ * Configuration is provided through:
+ * <ul>
+ *   <li>{@code piiEntities} – A JSON array of objects, each containing a {@code piiEntity} key and its corresponding {@code piiRegex} pattern.</li>
+ *   <li>{@code jsonPath} – An optional JSONPath expression to extract a specific part of the payload before applying the masking/redaction logic.</li>
+ *   <li>{@code redact} – A boolean flag indicating whether to redact (true) or mask (false) the PII.</li>
+ * </ul>
+ * <p>
+ * The mediator maintains consistency between request and response flows by tracking masked values using a context property
+ * ("PII_ENTITIES") so they can be reversed on the response if needed.
+ * <p>
+ * Example usage scenarios:
+ * <ul>
+ *   <li>Masking email addresses and names in API requests before logging or auditing.</li>
+ *   <li>Redacting sensitive information before passing it to external systems.</li>
+ * </ul>
  */
 public class PIIMaskingRegex extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(PIIMaskingRegex.class);
@@ -71,7 +87,7 @@ public class PIIMaskingRegex extends AbstractMediator implements ManagedLifecycl
     @Override
     public void init(SynapseEnvironment synapseEnvironment) {
         if (logger.isDebugEnabled()) {
-            logger.debug("PIIMaskingRegex: Initialized.");
+            logger.debug("Initializing PIIMaskingRegex.");
         }
     }
 
@@ -86,14 +102,22 @@ public class PIIMaskingRegex extends AbstractMediator implements ManagedLifecycl
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("PIIMaskingRegex: Beginning payload validation.");
+            logger.debug("Beginning payload validation.");
         }
 
         try {
-            // Do nothing for response flow - redact
-            if (!messageContext.isResponse() || !this.redact) identifyPIIAndTransform(messageContext);
+            identifyPIIAndTransform(messageContext);
         } catch (Exception e) {
-            logger.error("PIIMaskingRegex: Exception occurred during mediation.", e);
+            logger.error("Exception occurred during mediation.", e);
+
+            messageContext.setProperty(SynapseConstants.ERROR_CODE,
+                    PIIMaskingRegexConstants.APIM_INTERNAL_EXCEPTION_CODE);
+            messageContext.setProperty(SynapseConstants.ERROR_MESSAGE,
+                    "Error occurred during PIIMaskingRegex mediation");
+            Mediator faultMediator = messageContext.getFaultSequence();
+            faultMediator.mediate(messageContext);
+
+            return false; // Stop further mediation
         }
 
         return true;
@@ -109,7 +133,7 @@ public class PIIMaskingRegex extends AbstractMediator implements ManagedLifecycl
      */
     private void identifyPIIAndTransform(MessageContext messageContext) throws AxisFault {
         if (logger.isDebugEnabled()) {
-            logger.debug("PIIMaskingRegex: Identifying PII.");
+            logger.debug("Identifying PII.");
         }
 
         String jsonContent = extractJsonContent(messageContext);
@@ -127,7 +151,7 @@ public class PIIMaskingRegex extends AbstractMediator implements ManagedLifecycl
             String content = JsonPath.read(jsonContent, this.jsonPath).toString();
 
             // Remove quotes at beginning and end
-            String cleanedText = content.replaceAll("^\"|\"$", "").trim();
+            String cleanedText = content.replaceAll(PIIMaskingRegexConstants.TEXT_CLEAN_REGEX, "").trim();
 
             // Check if any extracted value by json path matches the piiEntities pattern
             updatedContent =  redact ? redactPIIFromContent(cleanedText)
@@ -159,6 +183,7 @@ public class PIIMaskingRegex extends AbstractMediator implements ManagedLifecycl
 
         if (!messageContext.isResponse()) {
             Map<String, String> maskedPIIEntities = new LinkedHashMap<>();
+            AtomicInteger counter = new AtomicInteger();
 
             for (Map.Entry<String, Pattern> entry : patterns.entrySet()) {
                 String key = entry.getKey();
@@ -175,7 +200,7 @@ public class PIIMaskingRegex extends AbstractMediator implements ManagedLifecycl
                     if (masked == null) {
                         // Generate unique placeholder like <Person1>, <Email1>
                         int count = Collections.frequency(maskedPIIEntities.values(), key);
-                        masked = "<" + key + "_" + (count + 1) + ">";
+                        masked = "<" + key + "_" + generateHexId(counter) + ">";
                         maskedPIIEntities.put(original, masked);
                     }
                     matcher.appendReplacement(resultBuffer, Matcher.quoteReplacement(masked));
@@ -201,14 +226,16 @@ public class PIIMaskingRegex extends AbstractMediator implements ManagedLifecycl
             }
         }
 
-        if (foundAndMasked) {
-            // Log or update masked content here if needed
-            if (logger.isDebugEnabled()) {
-                logger.debug("Masked content: " + maskedContent);
-            }
+        if (foundAndMasked && logger.isDebugEnabled()) {
+            logger.debug("Masked content: " + maskedContent);
         }
 
         return foundAndMasked? maskedContent: "";
+    }
+
+    private static String generateHexId(AtomicInteger counter) {
+        int count = counter.getAndIncrement();
+        return String.format("%04x", count); // 4-digit hex string, zero-padded
     }
 
     private String redactPIIFromContent(String jsonContent) {
@@ -230,11 +257,8 @@ public class PIIMaskingRegex extends AbstractMediator implements ManagedLifecycl
             }
         }
 
-        if (foundAndMasked) {
-            // Log or update masked content here if needed
-            if (logger.isDebugEnabled()) {
-                logger.debug("Masked content: " + maskedContent);
-            }
+        if (foundAndMasked && logger.isDebugEnabled()) {
+            logger.debug("Redact content: " + maskedContent);
         }
 
         return foundAndMasked? maskedContent: "";
@@ -283,10 +307,10 @@ public class PIIMaskingRegex extends AbstractMediator implements ManagedLifecycl
                 patterns.put(piiEntity, Pattern.compile(piiRegex));
             }
             if (logger.isDebugEnabled()) {
-                logger.debug("PIIMaskingRegex: Regex pattern compiled successfully: " + piiEntities);
+                logger.debug("PII regex patterns compiled successfully: " + piiEntities);
             }
         } catch (PatternSyntaxException e) {
-            logger.error("PIIMaskingRegex: Invalid piiEntities pattern: " + piiEntities, e);
+            logger.error("Invalid piiEntities pattern: " + piiEntities, e);
         }
     }
 

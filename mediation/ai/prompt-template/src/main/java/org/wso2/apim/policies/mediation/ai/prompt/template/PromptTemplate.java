@@ -98,6 +98,7 @@ import java.util.regex.Pattern;
 public class PromptTemplate extends AbstractMediator implements ManagedLifecycle {
     private static final Log logger = LogFactory.getLog(PromptTemplate.class);
 
+    private String name;
     private String promptTemplateConfig;
     private final Map<String, String> promptTemplates = new HashMap<>();
 
@@ -109,7 +110,7 @@ public class PromptTemplate extends AbstractMediator implements ManagedLifecycle
     @Override
     public void init(SynapseEnvironment synapseEnvironment) {
         if (logger.isDebugEnabled()) {
-            logger.debug("PromptTemplate: Initialized.");
+            logger.debug("Initializing PromptTemplate.");
         }
     }
 
@@ -134,13 +135,13 @@ public class PromptTemplate extends AbstractMediator implements ManagedLifecycle
     @Override
     public boolean mediate(MessageContext messageContext) {
         if (logger.isDebugEnabled()) {
-            logger.debug("PromptTemplate: Mediating message context with prompt templates.");
+            logger.debug("Mediating message context with prompt templates.");
         }
 
         try {
             findAndTransformPayload(messageContext);
         } catch (Exception e) {
-            logger.error("PromptTemplate: Error during mediation of message context", e);
+            logger.error("Error during mediation of message context", e);
         }
 
         return true;
@@ -157,7 +158,7 @@ public class PromptTemplate extends AbstractMediator implements ManagedLifecycle
      */
     private void findAndTransformPayload(MessageContext messageContext) throws AxisFault {
         if (logger.isDebugEnabled()) {
-            logger.debug("PromptTemplate: Transforming JSON payload based on prompt templates.");
+            logger.debug(this.name + "applying prompt templates.");
         }
 
         String jsonContent = extractJsonContent(messageContext);
@@ -207,10 +208,10 @@ public class PromptTemplate extends AbstractMediator implements ManagedLifecycle
                     // Directly replace in updatedJsonContent
                     updatedJsonContent = updatedJsonContent.replace(matched, resolvedPrompt);
                 } else {
-                    logger.warn("PromptTemplate: No prompt template found for: " + templateName);
+                    logger.warn("No prompt template found for: " + templateName);
                 }
             } catch (Exception e) {
-                logger.error("PromptTemplate: Error while transforming template for match: " + matched, e);
+                logger.error("Error while transforming template for match: " + matched, e);
             }
         }
 
@@ -233,6 +234,16 @@ public class PromptTemplate extends AbstractMediator implements ManagedLifecycle
         org.apache.axis2.context.MessageContext axis2MC =
                 ((Axis2MessageContext) messageContext).getAxis2MessageContext();
         return JsonUtil.jsonPayloadToString(axis2MC);
+    }
+
+    public String getName() {
+
+        return name;
+    }
+
+    public void setName(String name) {
+
+        this.name = name;
     }
 
     public String getPromptTemplateConfig() {
