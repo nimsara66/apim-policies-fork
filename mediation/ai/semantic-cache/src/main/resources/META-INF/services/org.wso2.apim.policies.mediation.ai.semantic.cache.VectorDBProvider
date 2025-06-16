@@ -1,0 +1,2 @@
+org.wso2.apim.policies.mediation.ai.semantic.cache.MilvusVectorDBProvider
+org.wso2.apim.policies.mediation.ai.semantic.cache.RedisVectorDBProvider
