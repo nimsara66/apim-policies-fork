@@ -29,7 +29,9 @@ import org.apache.axis2.AxisFault;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.synapse.ManagedLifecycle;
+import org.apache.synapse.Mediator;
 import org.apache.synapse.MessageContext;
+import org.apache.synapse.SynapseConstants;
 import org.apache.synapse.commons.json.JsonUtil;
 import org.apache.synapse.core.SynapseEnvironment;
 import org.apache.synapse.core.axis2.Axis2MessageContext;
@@ -95,6 +97,15 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
             findAndTransformPayload(messageContext);
         } catch (Exception e) {
             logger.error("Error during mediation of message context", e);
+
+            messageContext.setProperty(SynapseConstants.ERROR_CODE,
+                    PromptDecoratorConstants.APIM_INTERNAL_EXCEPTION_CODE);
+            messageContext.setProperty(SynapseConstants.ERROR_MESSAGE,
+                    "Error occurred during PromptDecorator mediation");
+            Mediator faultMediator = messageContext.getFaultSequence();
+            faultMediator.mediate(messageContext);
+
+            return false; // Stop further processing
         }
 
         return true;
@@ -214,10 +225,11 @@ public class PromptDecorator extends AbstractMediator implements ManagedLifecycl
                 this.type = PromptDecoratorConstants.DecorationType.STRING;
                 this.decoration = root.get(PromptDecoratorConstants.DECORATION).getAsString();
             } else {
-                logger.error("Invalid prompt template provided: " + promptDecoratorConfig);
+                throw new IllegalArgumentException(
+                        "Invalid prompt template format: expected 'decoration' as array or string.");
             }
         } catch (Exception e) {
-            logger.error("Invalid prompt template provided: " + promptDecoratorConfig, e);
+            throw new IllegalArgumentException("Invalid prompt template provided: " + promptDecoratorConfig, e);
         }
     }
 

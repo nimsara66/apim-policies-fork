@@ -30,7 +30,7 @@
       "displayName": "Prompt Decorator Configuration",
       "description": "The configuration for decorating the prompt. Can decorate completions or chat/completions definitions.",
       "type": "JSON",
-      "defaultValue": "[\n  {\n    \"role\": \"\",\n    \"content\": \"\"\n  }\n]",
+      "defaultValue": "{\n  \"decoration\": [\n    {\n      \"role\": \"\",\n      \"content\": \"\"\n    }\n  ]\n}",
       "allowedValues": [],
       "required": true
     },
@@ -39,7 +39,7 @@
       "displayName": "JSON Path",
       "description": "The JSONPath expression to extract the portion of the prompt that should be modified.",
       "type": "String",
-      "defaultValue": "$.messages[0].content",
+      "defaultValue": "$.messages",
       "allowedValues": [],
       "required": true
     },

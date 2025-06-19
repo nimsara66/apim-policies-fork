@@ -26,4 +26,5 @@ public class PromptDecoratorConstants {
         ARRAY
     }
     public static final String DECORATION = "decoration";
+    public static final int APIM_INTERNAL_EXCEPTION_CODE = 900967;
 }
