@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.wso2</groupId>
+        <artifactId>wso2</artifactId>
+        <version>1.3</version>
+    </parent>
+
+    <groupId>org.wso2.apim.policies</groupId>
+    <artifactId>apim.policies</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <name>WSO2 APIM Policies Aggregator POM</name>
+    <packaging>pom</packaging>
+    <modules>
+        <module>mediation</module>
+        <module>mediation/ai/pii-masking-guardrailsai</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven-compiler-plugin.version>3.11.0</maven-compiler-plugin.version>
+        <org.apache.felix.version>3.3.0</org.apache.felix.version>
+    </properties>
+
+</project>

@@ -1,0 +1,89 @@
+{
+  "category": "Mediation",
+  "name": "AWS Bedrock Guardrail",
+  "displayName": "AWS Bedrock Guardrail",
+  "version": "v1.0",
+  "description": "Integrate AWS Bedrock Guardrails.",
+  "applicableFlows": [
+    "request",
+    "response"
+  ],
+  "supportedApiTypes": [
+    {
+      "subType": "AIAPI",
+      "apiType": "HTTP"
+    }
+  ],
+  "supportedGateways": [
+    "Synapse"
+  ],
+  "policyAttributes": [
+    {
+      "name": "name",
+      "displayName": "Guardrail Name",
+      "description": "The name of the guardrail policy. This will be used for tracking purposes.",
+      "type": "String",
+      "allowedValues": [],
+      "required": true
+    },
+    {
+      "name": "region",
+      "displayName": "Guardrail Region",
+      "description": "The deployed region of the guardrail resource.",
+      "type": "String",
+      "allowedValues": [],
+      "required": true
+    },
+    {
+      "name": "guardrailId",
+      "displayName": "Guardrail ID",
+      "description": "The ID of the guardrail resource.",
+      "type": "String",
+      "allowedValues": [],
+      "required": true
+    },
+    {
+      "name": "guardrailVersion",
+      "displayName": "Guardrail Version",
+      "description": "The version of the guardrail resource.",
+      "type": "String",
+      "allowedValues": [],
+      "required": true
+    },
+    {
+      "name": "jsonPath",
+      "displayName": "JSON Path",
+      "description": "Specify the JSONPath expression that identifies the location where prompt decoration should be applied.",
+      "required": false,
+      "type": "String",
+      "allowedValues": []
+    },
+    {
+      "name": "redactPII",
+      "displayName": "Redact PII",
+      "description": "When enabled, detected PIIs are redacted and will not be restored to its original form. This should be enabled when the policy is attached to the response flow to prevent exposing AI-generated content with sensitive data to the client. When disabled and applied to the request flow, detected PII is temporarily masked and automatically restored in the corresponding response.",
+      "type": "Boolean",
+      "defaultValue": "false",
+      "allowedValues": [],
+      "required": false
+    },
+    {
+      "name": "passthroughOnError",
+      "displayName": "Passthrough on Error",
+      "description": "If enabled, the request or response is passed through without validation when the Azure Content Safety service is unavailable. Otherwise, a guardrail validation error is triggered.",
+      "required": false,
+      "defaultValue": "false",
+      "type": "Boolean",
+      "allowedValues": []
+    },
+    {
+      "name": "hideAssessment",
+      "displayName": "Hide Guardrail Assessment",
+      "description": "When enabled, the error response will omit detailed information about the reason for the guardrail intervention.",
+      "type": "Boolean",
+      "defaultValue": "false",
+      "allowedValues": [],
+      "required": false
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+type: operation_policy_specification
+version: v4.5.0
+data:
+  category: Mediation
+  name: IntegrationGuardrail
+  version: v1
+  displayName: Integration Guardrail
+  description: ""
+  applicableFlows:
+   - request
+   - response
+  supportedGateways:
+   - Synapse
+  supportedApiTypes:
+   - HTTP
+  policyAttributes:
+   -
+    name: webhookUrl
+    displayName: Webhook URL
+    description: ""
+    type: String
+    allowedValues: []
+    required: true
+   -
+    name: headers
+    displayName: Request Headers
+    description: ""
+    type: JSON
+    allowedValues: []
+    required: false
+   -
+    name: jsonPath
+    displayName: JSON Path to Content
+    description: ""
+    type: String
+    allowedValues: []
+    required: false
+   -
+    name: timeout
+    displayName: timeout
+    description: ""
+    type: Integer
+    allowedValues: []
+    required: false
